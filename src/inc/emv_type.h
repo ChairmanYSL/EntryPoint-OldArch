@@ -549,111 +549,62 @@ enum EMVL2_KernelIndex
 
 
 /*
- * Terminal parameters (EMV_TERMPARAM)
- * NOTE: temporary superset restored from the same-generation source; will be
- *       slimmed to the minimal required field set in the struct-minimization phase.
+ * Terminal parameters (EMV_TERMPARAM) - minimal required set.
+ *
+ * Kernels never read this structure: they call emvporting_get_termparam_tlv()
+ * and parse the raw TLV bytes stored in the parameter file.  Only fields that
+ * are parsed from the terminal parameter file and exposed through the (struct
+ * based) get_termparam() SPI remain; do not add a field without a writer and a
+ * reader - extend the raw TLV contract instead.
  */
 typedef struct {
-    uint8_t ics[7];                                      /* ICS */
+    uint8_t ics[7];                                      /* ICS ([1F01], default in init_param) */
     uint8_t term_type;                                   /* [9F35] */
-    uint8_t status_check_support_indicator;
-    uint8_t cl_trans_limit[6];                           /* [DF20] */
-    uint8_t acquirer_id[6];                              /* [9F01] */
-    uint8_t acquirer_id_exist;
-    uint8_t acquirer_id_len;
-    uint8_t term_ifd[8];                                 /* [9F1E] */
-    uint8_t merchant_category_code[2];                   /* [9F15] */
-    uint8_t merchant_id[15];                             /* [9F16] */
-    uint8_t merchant_id_exist;
-    uint8_t merchant_id_len;
-    uint8_t merchant_name[128];                          /* [9F4E] */
-    uint8_t merchant_name_len;
-    uint8_t merchant_name_exist;
-    uint8_t term_country_code[2];                        /* [9F1A] */
-    uint8_t term_id[8];                                  /* [9F1C] */
-    uint8_t term_id_exist;
-    uint8_t term_id_len;
-    uint8_t merch_custom_data[20];                       /* [9F7C] */
-    uint8_t trans_currency_code[2];                      /* [5F2A] */
-    uint8_t trans_currency_exponent;                     /* [5F36] */
-    uint8_t poi_info[128];                               /* [8B] */
-    uint8_t poi_info_len;
-    uint8_t proprietary_tag[128];                        /* [DF830A] */
-    uint8_t proprietary_tag_len;
-    uint8_t msd_app_ver[2];
-    uint8_t card_data_input_cap;                         /* [DF8117] */
-    uint8_t rrp_min_grace[2];                            /* [DF8132] */
-    uint8_t rrp_max_grace[2];                            /* [DF8133] */
-    uint8_t rrp_expect_c_apdu[2];                        /* [DF8134] */
-    uint8_t rrp_expect_r_apdu[2];                        /* [DF8135] */
-    uint8_t rrp_accuracy_threshold[2];                   /* [DF8136] */
+    uint8_t status_check_support_indicator;              /* [1F02]/[DFC108] */
+    uint8_t cl_trans_limit[6];                           /* [DF20] terminal-level default */
+    uint8_t term_caps[3];                                /* [9F33] */
+    uint8_t term_add_caps[5];                            /* [9F40] */
 } EMV_TERMPARAM;
+
+/*
+ * Per-AID parameters (EMV_AIDPARAM) - minimal required set.
+ *
+ * Consumer: EMV_PreProcess() in src/emv.c only.  Kernels read the raw TLV via
+ * emvporting_get_aidparam_tlv(); the fields below are the ones the Entry Point
+ * pre-processing actually evaluates, plus the AID identity kept for the
+ * get_aidparam()/EMVPORT_GetAppParam() contract.
+ */
 typedef struct {
 
     uint8_t aid[16];                                     /* [9F06] */
     uint8_t aid_len;
-
     uint8_t app_sel_indicator;                           /* [DF01] 0-partial, 1-exact */
     uint8_t app_ver[2];                                  /* [9F09] */
+    uint8_t kernel_id;                                   /* [9F2A] first byte */
 
-    uint8_t target_percent;                              /* [DF17] */
-    uint8_t max_target_percent;                          /* [DF16] */
-    uint8_t threshold_value[4];                          /* [DF15] */
-
-    uint8_t default_ddol_len;                            /* DDOL */
-    uint8_t default_ddol[252];                           /* [DF14] */
-    uint8_t default_tdol_len;                            /* TDOL */
-    uint8_t default_tdol[252];
-
-    uint8_t trans_ref_currency_code[2];                  /* [9F3C] */
-    uint8_t trans_ref_currency_exponent;                 /* [9F3D] */
-
-    uint8_t term_action_code_default_exist;
-    uint8_t term_action_code_default[5];                 /* [DF11] */
-    uint8_t term_action_code_online_exist;
-    uint8_t term_action_code_online[5];                  /* [DF12] */
-    uint8_t term_action_code_denial_exist;
-    uint8_t term_action_code_denial[5];                  /* [DF13] */
-
-    uint8_t term_risk_mana_data_len;
-    uint8_t term_risk_mana_data[8];                      /* [9F1D] */
-
-    uint8_t online_pin_support_indicator;                /* [DF18] */
-    uint8_t status_check_support_indicator;              /* [1F02] */
-    uint8_t cl_trans_limit_exist;
-    uint8_t cl_trans_limit[6];                           /* [DF20] */
-    uint8_t cvm_limit_exist;
-    uint8_t cvm_limit[6];                                /* [DF21] */
-    uint8_t cl_floor_limit_exist;
-    uint8_t cl_floor_limit[6];                           /* [DF19] */
-    uint8_t term_floor_limit_exist;
-    uint8_t term_floor_limit[4];                         /* [9F1B] */
-    uint8_t zero_amt_allow_flag;                          /* [1F04] */
-    uint8_t cvmcap_cvmreq;                               /* [DF8118] */
-    uint8_t cvmcap_nocvm;                                /* [DF8119] */
-    uint8_t paypass_kernel_config;                       /* [DF811B] */
-    uint8_t reader_cl_trans_limit_cdcvm_exist;
-    uint8_t reader_cl_trans_limit_cdcvm[6];              /* [DF8125] */
-    uint8_t msd_cvmcap_cvmreq_exist;
-    uint8_t msd_cvmcap_cvmreq;                           /* [DF811E] */
-    uint8_t msd_cvmcap_nocvm_exist;
-    uint8_t msd_cvmcap_nocvm;                            /* [DF812C] */
-    uint8_t reader_cl_trans_limit_nocdcvm_exist;
-    uint8_t reader_cl_trans_limit_nocdcvm[6];            /* [DF8124] */
-    uint8_t mobile_sup_indicator;                        /* [9F7E] */
-    uint8_t secure_cap;                                  /* [DF811F] */
-    uint8_t term_caps[3];                                /* [9F33] */
-    uint8_t term_add_caps[5];                            /* [9F40] */
-    uint8_t kernel_id;                                   /* [9F2A] */
-    uint8_t term_type;
     uint8_t ttq[4];                                      /* [9F66] */
-
-    /* --- fields required by the entry-point pre-processing (new-gen code) --- */
     uint8_t status_check_support;                        /* status check supported */
     uint8_t currency_exp;                                /* [5F36] cached exponent */
     uint8_t zero_amt_offline_allow;
     uint8_t zero_amt_allow;
+
+    uint8_t cl_trans_limit_exist;
+    uint8_t cl_trans_limit[6];                           /* [DF20] */
+    uint8_t cl_floor_limit_exist;
+    uint8_t cl_floor_limit[6];                           /* [DF19] */
+    uint8_t cvm_limit_exist;
+    uint8_t cvm_limit[6];                                /* [DF21] */
+    uint8_t term_floor_limit_exist;
+    uint8_t term_floor_limit[4];                         /* [9F1B] */
 } EMV_AIDPARAM;
+
+/*
+ * Compile-time size guards for the two minimal sets.  C99 compatible: a
+ * negative array bound is a hard compile error.  Raise a limit only together
+ * with a documented consumer (never just to make a build pass).
+ */
+typedef char emv_chk_termparam_size[(sizeof(EMV_TERMPARAM) <= 80) ? 1 : -1];
+typedef char emv_chk_aidparam_size[(sizeof(EMV_AIDPARAM) <= 160) ? 1 : -1];
 
 /**
  * �ն�Ӧ���б���ռ20�ֽڣ�

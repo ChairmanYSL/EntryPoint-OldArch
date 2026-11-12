@@ -291,11 +291,7 @@ static void init_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar)
     if (apar)
     {
         API_memset(apar, 0, sizeof(EMV_AIDPARAM));
-        apar->default_ddol_len = 11;
-        API_memcpy(apar->default_ddol,"\x9F\x37\x04\x9F\x47\x01\x8F\x01\x9F\x32\x01", 11);
-        apar->default_tdol_len = 3;
-        API_memcpy(apar->default_tdol, "\x9F\x08\x02", 3);
-		apar->kernel_id = 0x02;
+        apar->kernel_id = 0x02;
         API_memcpy(apar->app_ver, "\x00\x02", 2);
     }
 
@@ -436,115 +432,37 @@ static int32_t conv_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar, u8* in, int i
                 API_memcpy(tpar->ics, tlvs[i].pvalue, 7);
                 break;
             case TAG_STATUS_CHECK_SUPPORT_INDICATOR:
-				if(tlvs[i].valuelen)
-				{
-					tpar->status_check_support_indicator = *(tlvs[i].pvalue);
-				}
+                if(tlvs[i].valuelen)
+                {
+                    tpar->status_check_support_indicator = *(tlvs[i].pvalue);
+                }
                 break;
-			//for authticate only
-			case TAG_9F01_ACQUIRER_IDENTIFIER:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(tpar->acquirer_id, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
+            case TAG_9F35_TERMINAL_TYPE:
+                if(tlvs[i].valuelen)
+                {
+                    tpar->term_type = *(tlvs[i].pvalue);
+                }
                 break;
-			case TAG_9F1E_IFD_SERIAL_NUMBER:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(tpar->term_ifd, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
-				break;
-            case TAG_9F15_MERCHANT_CATEGORY_CODE:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(tpar->merchant_category_code, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
+            case TAG_DF20_CONTACTLESS_TRANSACTION_LIMIT:
+                if(tlvs[i].valuelen)
+                {
+                    API_memcpy(tpar->cl_trans_limit, tlvs[i].pvalue, 6);
+                }
                 break;
-            case TAG_9F16_MERCHANT_IDENTIFIER:
-				if(tlvs[i].valuelen > 0)
-				{
-					API_memcpy(tpar->merchant_id, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
+            case TAG_9F33_TERMINAL_CAPABILITIES:
+                if(tlvs[i].valuelen)
+                {
+                    API_memcpy(tpar->term_caps, tlvs[i].pvalue, tlvs[i].valuelen);
+                }
                 break;
-			case TAG_9F4E_MERCHANT_NAME:
-				if(tlvs[i].valuelen > 0)
-				{
-					if(tlvs[i].valuelen > sizeof(tpar->merchant_name))
-					{
-						tpar->merchant_name_len = sizeof(tpar->merchant_name);
-					}
-					else
-					{
-						tpar->merchant_name_len = tlvs[i].valuelen;
-					}
-					API_memcpy(tpar->merchant_name, tlvs[i].pvalue, tpar->merchant_name_len);
-				}
-				break;
-			case TAG_9F1A_TERMINAL_COUNTRY_CODE:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(tpar->term_country_code, tlvs[i].pvalue, sizeof(tpar->term_country_code));
-				}
-				break;
-            case TAG_9F1C_TERMINAL_IDENTIFICATION:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(tpar->term_id, tlvs[i].pvalue, sizeof(tpar->term_id));
-				}
+            case TAG_9F40_ADDITIONAL_TERMINAL_CAPABILITIES:
+                if(tlvs[i].valuelen)
+                {
+                    API_memcpy(tpar->term_add_caps, tlvs[i].pvalue, tlvs[i].valuelen);
+                }
                 break;
-			case TAG_9F7C_MERCHANT_CUSTOM_DATA:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(tpar->merch_custom_data, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
+            default:
                 break;
-            case TAG_5F2A_TRANSACTION_CURRENCY_CODE:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(tpar->trans_currency_code, tlvs[i].pvalue, sizeof(tpar->trans_currency_code));
-				}
-                break;
-			case TAG_5F36_TRANSACTION_CURRENCY_EXPONENT:
-				if(tlvs[i].valuelen)
-				{
-					tpar->trans_currency_exponent = *(tlvs[i].pvalue);
-				}
-				break;
-			case TAG_008B_POI_INFOMATION:
-				if(tlvs[i].valuelen > sizeof(tpar->poi_info))
-				{
-					tpar->poi_info_len = sizeof(tpar->poi_info);
-				}
-				else
-				{
-					tpar->poi_info_len = tlvs[i].valuelen;
-				}
-				if(tpar->poi_info_len)
-				{
-					API_memcpy(tpar->poi_info, tlvs[i].pvalue, tpar->poi_info_len);
-				}
-				break;
-			case TAG_9F05_APPLICATION_DISCRETIONARY_DATA:
-				TRACE("emvport-info: set 9F05");
-				if(tlvs[i].valuelen > sizeof(tpar->proprietary_tag))
-				{
-					tpar->proprietary_tag_len = sizeof(tpar->proprietary_tag);
-				}
-				else
-				{
-					tpar->proprietary_tag_len = tlvs[i].valuelen;
-				}
-
-				TRACE("emvport-info: tpar->proprietary_tag_len = %d", tpar->proprietary_tag_len);
-				if(tpar->proprietary_tag_len)
-				{
-					API_memcpy(tpar->proprietary_tag, tlvs[i].pvalue, tpar->proprietary_tag_len);
-				}
-				break;
-				tpar->trans_currency_exponent = *(tlvs[i].pvalue);
-
-			default:
-				break;
             }
         }
 
@@ -556,256 +474,104 @@ static int32_t conv_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar, u8* in, int i
                 apar->aid_len = tlvs[i].valuelen;
                 API_memcpy(apar->aid, tlvs[i].pvalue, tlvs[i].valuelen);
                 break;
-			case TAG_9F35_TERMINAL_TYPE:
-				if(tlvs[i].valuelen)
-				{
-					apar->term_type = *(tlvs[i].pvalue);
-				}
-				break;
             case TAG_DF01_ASI:
-				if(tlvs[i].valuelen)
-				{
-					apar->app_sel_indicator = *(tlvs[i].pvalue);
-				}
+                if(tlvs[i].valuelen)
+                {
+                    apar->app_sel_indicator = *(tlvs[i].pvalue);
+                }
                 break;
             case TAG_9F09_APPLICATION_VERSION_NUMBER_TERMINAL:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(apar->app_ver, tlvs[i].pvalue, 2);
-				}
-                break;
-            case TAG_DF17_TARGET_PERCENTAGE:
-				if(tlvs[i].valuelen)
-				{
-					apar->target_percent = *(tlvs[i].pvalue);
-				}
-                break;
-            case TAG_DF16_MAX_TARGET_PERCENTAGE:
-				if(tlvs[i].valuelen)
-				{
-					apar->max_target_percent = *(tlvs[i].pvalue);
-				}
-                break;
-            case TAG_DF15_THRESHOLD_VALUE:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(apar->threshold_value, tlvs[i].pvalue, 4);
-				}
-                break;
-            case TAG_DF14_DEFAULT_DDOL:
-                if (tlvs[i].valuelen < sizeof(apar->default_ddol) && tlvs[i].valuelen >= 0)
+                if(tlvs[i].valuelen)
                 {
-                    apar->default_ddol_len = tlvs[i].valuelen;
-                    API_memcpy(apar->default_ddol, tlvs[i].pvalue, tlvs[i].valuelen);
+                    API_memcpy(apar->app_ver, tlvs[i].pvalue, 2);
                 }
-                break;
-            case TAG_DEFAULT_TDOL:
-                if (tlvs[i].valuelen < sizeof(apar->default_tdol) && tlvs[i].valuelen >= 0)
-                {
-                    apar->default_tdol_len = tlvs[i].valuelen;
-                    API_memcpy(apar->default_tdol, tlvs[i].pvalue, tlvs[i].valuelen);
-                }
-                break;
-            case TAG_9F3C_TRANSACTION_REFERENCE_CURRENCY:
-				if(tlvs[i].valuelen)
-				{
-					API_memcpy(apar->trans_ref_currency_code, tlvs[i].pvalue, 2);
-				}
-                break;
-            case TAG_9F3D_TRANSACTION_REFERENCE_CURRENCY_EXPONENT:
-				if(tlvs[i].valuelen)
-				{
-					apar->trans_ref_currency_exponent = *(tlvs[i].pvalue);
-				}
-                break;
-            case TAG_DF11_TAC_DEFAULT:
-				if(tlvs[i].valuelen)
-				{
-					apar->term_action_code_default_exist = 1;
-					API_memcpy(apar->term_action_code_default, tlvs[i].pvalue, 5);
-				}
-                break;
-            case TAG_DF12_TAC_ONLINE:
-				if(tlvs[i].valuelen)
-				{
-					apar->term_action_code_online_exist = 1;
-					API_memcpy(apar->term_action_code_online, tlvs[i].pvalue, 5);
-				}
-                break;
-            case TAG_DF13_TAC_DENIAL:
-				if(tlvs[i].valuelen)
-				{
-					apar->term_action_code_denial_exist = 1;
-					API_memcpy(apar->term_action_code_denial, tlvs[i].pvalue, 5);
-				}
-                break;
-            case TAG_9F1D_TERMINAL_RISK_MANGEMENT_DATA:
-                if (tlvs[i].valuelen <= sizeof(apar->term_risk_mana_data) && tlvs[i].valuelen >= 0)
-                {
-                    apar->term_risk_mana_data_len = tlvs[i].valuelen;
-                    API_memcpy(apar->term_risk_mana_data, tlvs[i].pvalue, tlvs[i].valuelen);
-                }
-                break;
-            case TAG_DF18_ONLINE_PIN_SUPPORT_INDICATOR:
-                apar->online_pin_support_indicator = *(tlvs[i].pvalue);
-                break;
-            case TAG_STATUS_CHECK_SUPPORT_INDICATOR:
-                apar->status_check_support_indicator = *(tlvs[i].pvalue);
                 break;
             case TAG_DF20_CONTACTLESS_TRANSACTION_LIMIT:
-				if(tlvs[i].valuelen)
-				{
-					apar->cl_trans_limit_exist = 1;
-					API_memcpy(apar->cl_trans_limit, tlvs[i].pvalue, 6);
-				}
+                if(tlvs[i].valuelen)
+                {
+                    apar->cl_trans_limit_exist = 1;
+                    API_memcpy(apar->cl_trans_limit, tlvs[i].pvalue, 6);
+                }
                 break;
             case TAG_DF21_CVM_REQUIRED_LIMIT:
-				if(tlvs[i].valuelen)
-				{
-					apar->cvm_limit_exist = 1;
-					API_memcpy(apar->cvm_limit, tlvs[i].pvalue, 6);
-				}
+                if(tlvs[i].valuelen)
+                {
+                    apar->cvm_limit_exist = 1;
+                    API_memcpy(apar->cvm_limit, tlvs[i].pvalue, 6);
+                }
                 break;
             case TAG_DF19_CONTACTLESS_FLOOR_LIMIT:
-				if(tlvs[i].valuelen)
-				{
-					apar->cl_floor_limit_exist = 1;
-					API_memcpy(apar->cl_floor_limit, tlvs[i].pvalue, 6);
-				}
+                if(tlvs[i].valuelen)
+                {
+                    apar->cl_floor_limit_exist = 1;
+                    API_memcpy(apar->cl_floor_limit, tlvs[i].pvalue, 6);
+                }
                 break;
-			//for authenticate only
+            //for authenticate only
             case TAG_9F1B_TERMINAL_FLOOR_LIMIT:
-				if(tlvs[i].valuelen == 4)
-				{
-					apar->term_floor_limit_exist = 1;
-					API_memcpy(apar->term_floor_limit, tlvs[i].pvalue, 4);
-				}
-				else if(tlvs[i].valuelen == 6)
-				{
-					/* 6-byte BCD (n12) -> 4-byte binary, big endian */
-					uint64_t floor_dec = 0;
-					bool floor_ok = TRUE;
-					int32_t k;
+                if(tlvs[i].valuelen == 4)
+                {
+                    apar->term_floor_limit_exist = 1;
+                    API_memcpy(apar->term_floor_limit, tlvs[i].pvalue, 4);
+                }
+                else if(tlvs[i].valuelen == 6)
+                {
+                    /* 6-byte BCD (n12) -> 4-byte binary, big endian */
+                    uint64_t floor_dec = 0;
+                    bool floor_ok = TRUE;
+                    int32_t k;
 
-					for (k = 0; k < 6; k++)
-					{
-						uint8_t hi = (uint8_t)((tlvs[i].pvalue[k] >> 4) & 0x0F);
-						uint8_t lo = (uint8_t)(tlvs[i].pvalue[k] & 0x0F);
+                    for (k = 0; k < 6; k++)
+                    {
+                        uint8_t hi = (uint8_t)((tlvs[i].pvalue[k] >> 4) & 0x0F);
+                        uint8_t lo = (uint8_t)(tlvs[i].pvalue[k] & 0x0F);
 
-						if (hi > 9 || lo > 9)
-						{
-							floor_ok = FALSE;
-							break;
-						}
-						floor_dec = floor_dec * 10 + hi;
-						if (floor_dec > 0xFFFFFFFFULL)
-						{
-							floor_ok = FALSE;
-							break;
-						}
-						floor_dec = floor_dec * 10 + lo;
-						if (floor_dec > 0xFFFFFFFFULL)
-						{
-							floor_ok = FALSE;
-							break;
-						}
-					}
+                        if (hi > 9 || lo > 9)
+                        {
+                            floor_ok = FALSE;
+                            break;
+                        }
+                        floor_dec = floor_dec * 10 + hi;
+                        if (floor_dec > 0xFFFFFFFFULL)
+                        {
+                            floor_ok = FALSE;
+                            break;
+                        }
+                        floor_dec = floor_dec * 10 + lo;
+                        if (floor_dec > 0xFFFFFFFFULL)
+                        {
+                            floor_ok = FALSE;
+                            break;
+                        }
+                    }
 
-					if (floor_ok)
-					{
-						emv_dec2hex((uint32_t)floor_dec, term_floor_lmt, sizeof(term_floor_lmt));
-						apar->term_floor_limit_exist = 1;
-						API_memcpy(apar->term_floor_limit, term_floor_lmt, sizeof(apar->term_floor_limit));
-					}
-					else
-					{
-						TRACE("emvport-error: 9F1B value invalid, rejected");
-						ret = rERR(ILL_TERMPARAM);
-					}
-				}
-				else
-				{
-					TRACE("emvport-error: 9F1B len[%d] rejected", tlvs[i].valuelen);
-					ret = rERR(ILL_TERMPARAM);
-				}
+                    if (floor_ok)
+                    {
+                        emv_dec2hex((uint32_t)floor_dec, term_floor_lmt, sizeof(term_floor_lmt));
+                        apar->term_floor_limit_exist = 1;
+                        API_memcpy(apar->term_floor_limit, term_floor_lmt, sizeof(apar->term_floor_limit));
+                    }
+                    else
+                    {
+                        TRACE("emvport-error: 9F1B value invalid, rejected");
+                        ret = rERR(ILL_TERMPARAM);
+                    }
+                }
+                else
+                {
+                    TRACE("emvport-error: 9F1B len[%d] rejected", tlvs[i].valuelen);
+                    ret = rERR(ILL_TERMPARAM);
+                }
                 break;
-			case TAG_DF811E_MSD_CVMCAP_CVMREQ:
-				if(tlvs[i].valuelen)
-				{
-					apar->msd_cvmcap_cvmreq = *(tlvs[i].pvalue);
-				}
-				break;
-			case TAG_DF8118_CVMCAP_CVMREQ:
-				if(tlvs[i].valuelen)
-				{
-					apar->cvmcap_cvmreq = *(tlvs[i].pvalue);
-				}
-				break;
-			case TAG_DF8119_CVMCAP_NOCVM:
-				if(tlvs[i].valuelen)
-				{
-					apar->cvmcap_nocvm = *(tlvs[i].pvalue);
-				}
-				break;
-			case TAG_DF811B_KERNEL_CONFIG:
-				if(tlvs[i].valuelen)
-				{
-					apar->paypass_kernel_config = *(tlvs[i].pvalue);
-				}
-				break;
-			case TAG_DF8124_READER_CTL_TRX_LIMIT_NOCDCVM:
-				if(tlvs[i].valuelen)
-				{
-					apar->reader_cl_trans_limit_nocdcvm_exist = 1;
-					emv_memcpy(apar->reader_cl_trans_limit_nocdcvm, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
-				break;
-			case TAG_DF8125_READER_CTL_TRX_LIMIT_CDCVM:
-				if(tlvs[i].valuelen)
-				{
-					apar->reader_cl_trans_limit_cdcvm_exist = 1;
-					emv_memcpy(apar->reader_cl_trans_limit_cdcvm, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
-				break;
-			case TAG_DF812C_MSD_CVMCAP_NOCVM:
-				if(tlvs[i].valuelen)
-				{
-					apar->msd_cvmcap_nocvm = *(tlvs[i].pvalue);
-				}
-				break;
-			case TAG_9F7E_MOBILE_SUPPORT_INDICATOR:
-				if(tlvs[i].valuelen > 0)
-				{
-					apar->mobile_sup_indicator = *(tlvs[i].pvalue);
-				}
-				break;
-			case TAG_DF811F_SECURITY_CAP:
-				if(tlvs[i].valuelen > 0)
-				{
-					apar->secure_cap = *(tlvs[i].pvalue);
-				}
-				break;
-			case TAG_9F33_TERMINAL_CAPABILITIES:
-				if(tlvs[i].valuelen)
-				{
-					emv_memcpy(apar->term_caps, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
-				break;
-			case TAG_9F40_ADDITIONAL_TERMINAL_CAPABILITIES:
-				if(tlvs[i].valuelen)
-				{
-					emv_memcpy(apar->term_add_caps, tlvs[i].pvalue, tlvs[i].valuelen);
-				}
-				break;
-			case TAG_9F2A_KERNEL_ID:
-				if(tlvs[i].valuelen)
-				{
-					apar->kernel_id = *(tlvs[i].pvalue);
-				}
-				break;
+            case TAG_9F2A_KERNEL_ID:
+                if(tlvs[i].valuelen)
+                {
+                    apar->kernel_id = *(tlvs[i].pvalue);
+                }
+                break;
 
-			default:
-				break;
+            default:
+                break;
             }
         }
     }
@@ -1193,14 +959,15 @@ aid����д��ͬһ���ļ�
 
 int32_t emvporting_get_aidparam(EMV_AIDPARAM* apar, int32_t inx)
 {
-    int32_t fd,ret;
+    int32_t fd;
     uint8_t  buf[PARA_SAVLEN];
     int32_t len;
     uint8_t* ptr;
-    EMV_TERMPARAM  tpar_buf;   /* scratch: term-level tags found in the AID record are not persisted (raw TLV read-back is used by kernels) */
-    EMV_TERMPARAM* tpar = &tpar_buf;
 
-    init_param(tpar, apar);
+    /* Terminal-level tags are parsed straight into apar (a per-AID value in the
+     * AID record overrides it later); no EMV_TERMPARAM scratch is needed since
+     * kernels read the full parameters back as raw TLV. */
+    init_param(NULL, apar);
 
 for(;;)
 {
@@ -1224,8 +991,7 @@ for(;;)
         return rERR(ErFREAD);
     }
 
-    ret = API_fclose(fd);
-//    TRACE("colse read termpar API_fclose = %d", ret);
+    API_fclose(fd);
 
     API_memcpy(&len, buf, PARA_LENLEN);
     if (len <= 0 || len > PARA_MAXLEN)
@@ -1237,7 +1003,7 @@ for(;;)
 //    TRACE("len:%d", len);
 //    TRACE_HEX("buf", buf, len+4);
     ptr = buf + PARA_LENLEN;
-    conv_param(tpar, apar, ptr, len);
+    conv_param(NULL, apar, ptr, len);
     break;
 }
 
@@ -1259,8 +1025,7 @@ for(;;)
         return rERR(ErFREAD);
     }
 
-    ret = API_fclose(fd);
-//    TRACE("colse read aid API_fclose = %d", ret);
+    API_fclose(fd);
 
     API_memcpy(&len, buf, PARA_LENLEN);
     if (len <= 0 || len > PARA_MAXLEN)
@@ -1271,7 +1036,7 @@ for(;;)
 //    TRACE_HEX("buf", buf, len+4);
 
     ptr = buf + PARA_LENLEN;
-    conv_param(tpar, apar, ptr, len);
+    conv_param(NULL, apar, ptr, len);
 }
 
     return 0;

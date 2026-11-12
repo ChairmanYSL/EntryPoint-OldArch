@@ -282,7 +282,7 @@ static int express_load_term_app_param(uint8_t termapp_index)
     }
     else
     {
-        appdata_save(TAG_DF21_CVM_REQUIRED_LIMIT, "\x99\x99\x99\x99\x99\x99", 6, UNIQUE);
+        appdata_save(TAG_DF21_CVM_REQUIRED_LIMIT, (uint8_t*)"\x99\x99\x99\x99\x99\x99", 6, UNIQUE);
     }
 
     appdata_save(TAG_9F7A_EC_TERMINAL_SUPPORT_INDICATOR, &g_express_cnxt->term.ec_support, 1, UNIQUE);

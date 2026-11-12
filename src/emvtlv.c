@@ -2007,6 +2007,7 @@ int32_t emvdol_tag_exists(uint32_t tagname, uint8_t *dol, int32_t dollen)
 
         reqlen = dol[i++];
 		eTRACE("reqlen: %d", reqlen);
+        (void)reqlen;
 
         if (i > dollen)
 		{

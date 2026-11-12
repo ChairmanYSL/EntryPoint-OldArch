@@ -776,7 +776,7 @@ int32_t deal_pse_resp(uint8_t *resp, int32_t resp_len)
 							return rERR(AS_SELERR);
 						}
 
-						emvicc_select(DF_PSE, emv_strlen(DF_PSE), false, NULL, NULL);
+						emvicc_select((uint8_t*)DF_PSE, emv_strlen(DF_PSE), false, NULL, NULL);
 					}
 					else if ((pos_aid = emvtlv_get(i, TAG_004F_AID, tlvs, SEARCH_ONLY_SON)) && (tlvs[pos_aid].valuelen > 0))
 					{
@@ -1418,7 +1418,7 @@ static int32_t select_use_aid_list(uint8_t type)
 
 	if(type == EMV_CARD_CONTACTLESS)
 	{
-		sw = emvicc_select("\xA0\x00\x00\x00\x25\x01", 6, false, resp, &resp_len);
+		sw = emvicc_select((uint8_t*)"\xA0\x00\x00\x00\x25\x01", 6, false, resp, &resp_len);
 		if(0x9000 == sw)
 		{
 			ret = parse_select_resp(resp, resp_len, sw);
@@ -1435,7 +1435,7 @@ static int32_t select_use_aid_list(uint8_t type)
 		while (1)
 		{
 			//partial select next
-			sw = emvicc_select("\xA0\x00\x00\x00\x25\x01", 6, true, resp, &resp_len);
+			sw = emvicc_select((uint8_t*)"\xA0\x00\x00\x00\x25\x01", 6, true, resp, &resp_len);
 			if(0x9000 == sw)
 			{
 				ret = parse_select_resp(resp, resp_len, sw);

@@ -91,7 +91,7 @@ int express_send_trans_result(int result)
 {
 	if(tvr_get(CDA_FAILED))
 	{
-		appdata_save(TAG_008A_ARC, "Z1", 2, OVERRIDED);
+		appdata_save(TAG_008A_ARC, (uint8_t*)"Z1", 2, OVERRIDED);
 		return express_outcome_declined_transactions(EMV_DENIALED_OFFLINE);
 //		return rEND(EMV_DENIALED_OFFLINE);
 	}
@@ -102,7 +102,7 @@ int express_send_trans_result(int result)
 			return express_outcome_approved_transactions(result);
 
 		case EMV_DENIALED_OFFLINE:
-			appdata_save(TAG_008A_ARC, "Z1", 2, OVERRIDED);
+			appdata_save(TAG_008A_ARC, (uint8_t*)"Z1", 2, OVERRIDED);
 			return express_outcome_declined_transactions(result);
 //			return rEND(result);
 
