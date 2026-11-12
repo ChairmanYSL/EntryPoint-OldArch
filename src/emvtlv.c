@@ -70,6 +70,82 @@ int32_t tlv_get_len(uint8_t* buf, int32_t* len)
     return lenlen;
 }
 
+/*
+ * Bounded variants of tlv_get_tag()/tlv_get_len() used by the internal list
+ * helpers: the public functions have no "remaining length" parameter and may
+ * read up to 4 bytes past the end of a malformed value. These never read past
+ * `maxlen` bytes.
+ */
+static int32_t tlv_get_tag_bounded(const uint8_t *buf, int32_t maxlen, uint32_t *tag)
+{
+    int32_t taglen = 0;
+    uint32_t tmptag = 0;
+
+    if (buf == NULL || tag == NULL || maxlen <= 0)
+    {
+        return -1;
+    }
+
+    if (has_subsequent(buf[taglen]))
+    {
+        do
+        {
+            if (taglen >= maxlen)
+            {
+                return -1;
+            }
+            tmptag = (tmptag | buf[taglen++]) << 8;
+            if (taglen == 4)
+            {
+                return -1;
+            }
+            if (taglen >= maxlen)
+            {
+                return -1;
+            }
+        } while (another_byte_follow(buf[taglen]));
+    }
+
+    if (taglen >= maxlen)
+    {
+        return -1;
+    }
+    *tag = (tmptag | buf[taglen++]);
+
+    return taglen;
+}
+
+static int32_t tlv_get_len_bounded(const uint8_t *buf, int32_t maxlen, int32_t *len)
+{
+    int32_t i, lenlen = 0;
+    int32_t tmplen = 0;
+
+    if (buf == NULL || len == NULL || maxlen <= 0)
+    {
+        return -1;
+    }
+
+    tmplen = buf[lenlen] & 0x7F;
+    if (lenlen_exceed_one(buf[lenlen++]))
+    {
+        if (tmplen < 1 || tmplen > 3 || (lenlen + tmplen) > maxlen)
+        {
+            return -1;
+        }
+
+        i = tmplen;
+        tmplen = 0;
+        while (i > 0)
+        {
+            tmplen |= buf[lenlen++] << (--i * 8);
+        }
+    }
+
+    *len = tmplen;
+
+    return lenlen;
+}
+
 int32_t tlv_set_tag(uint32_t tag, uint8_t* buf)
 {
     int32_t i, taglen;
@@ -384,7 +460,13 @@ int32_t emvtlv_decode(uint8_t *data, int32_t data_len, EMV_TLVOBJ *tlvs, int32_t
 {
 	int32_t ret;
 
-	if (data == NULL || tlvs == NULL)
+	if (data == NULL || tlvs == NULL || data_len < 0)
+	{
+		return rERR(TLV_INPUTDATAERR);
+	}
+
+	/* tlvs[0] is the pseudo root object and SINGLE_TLVOBJ also inspects tlvs[1] */
+	if (tlvs_max < 1 || ((flags & SINGLE_TLVOBJ) && tlvs_max < 2))
 	{
 		return rERR(TLV_INPUTDATAERR);
 	}
@@ -410,106 +492,98 @@ int32_t emvtlv_decode(uint8_t *data, int32_t data_len, EMV_TLVOBJ *tlvs, int32_t
 	return EMV_OK;
 }
 
-//if u use this interface,it will malloc memory,need to free in outside caller
+/*
+ * Decode a list of "string style" TLV objects (STRING_TLVOBJ).
+ *
+ * P1 fix (heap removal): this function used to allocate a private copy of every
+ * value with malloc(), leaving the caller to free() objects it could not even
+ * tell apart. It now follows the same ownership rule as emvtlv_decode(): all
+ * EMV_TLVOBJ.pvalue pointers alias the caller supplied `data` buffer and stay
+ * valid only while `data` stays valid. No heap, no free() needed.
+ * The previous version also mis-parsed long form lengths and could write
+ * tlvs[tlvs_max]; both are fixed below.
+ */
 int32_t emvtlv_decode_itemlist(uint8_t *data, int32_t data_len, EMV_TLVOBJ *tlvs, int32_t tlvs_max, int32_t flags)
 {
-	int32_t i, j, k, ret;
-	int32_t t_len,len_byte,rest_byte,v_len;
+	int32_t i, j, k, t_len, nlen, len_byte, v_len;
 
-	if (data == NULL || tlvs == NULL)
+	if (data == NULL || tlvs == NULL || data_len <= 0 || tlvs_max < 2 || !(flags & STRING_TLVOBJ))
 	{
 		return rERR(TLV_INPUTDATAERR);
 	}
 
 	emv_memset(tlvs, 0x00, sizeof(EMV_TLVOBJ) * tlvs_max);
+	tlvs[0].pvalue = data;
 	tlvs[0].valuelen = data_len;
-	tlvs[0].pvalue = (uint8_t *)malloc(tlvs[0].valuelen);
-	emv_memset(tlvs[0].pvalue, 0, tlvs[0].valuelen);
-	emv_memcpy(tlvs[0].pvalue, data, tlvs[0].valuelen);
 
-	if (flags & STRING_TLVOBJ)
+	i = 0;
+	j = 1;
+
+	while (i < data_len && j < tlvs_max)
 	{
-		i = 0;
-		j = 1;
-
-		while (i < data_len)
+		/* T: at most 3 bytes are handled here (matching emv_hex2dec usage) */
+		t_len = 1;
+		if ((data[i] & 0x1F) == 0x1F)
 		{
-			if(j > tlvs_max || i >= data_len)
+			if (i + 1 >= data_len)
 			{
 				break;
 			}
-
-			//store T
-			if(data[i] & 0x7F)
+			t_len = 2;
+			if (data[i + 1] & 0x80)
 			{
-				if(data[i+1] & 0x80)
+				if (i + 2 >= data_len)
 				{
-					t_len = 3;
+					break;
 				}
-				else
-				{
-					t_len = 2;
-				}
+				t_len = 3;
 			}
-			else
-			{
-				t_len = 1;
-			}
-
-			tlvs[j].tagname = emv_hex2dec(data+i, t_len);
-			i += t_len;
-
-			//store L
-			if(data[i] & 0x80)
-			{
-				len_byte = (data[i] & 0x7F) + 1;
-			}
-			else
-			{
-				len_byte = 1;
-			}
-
-			rest_byte = len_byte - 1;
-			if(rest_byte > 1)
-			{
-				for(k = 1; k < rest_byte; k++)
-				{
-					tlvs[j].valuelen |= data[i+k] << (8 * (len_byte - k));
-				}
-			}
-			else
-			{
-				if(len_byte > 1)
-				{
-					tlvs[j].valuelen = data[i+1];
-				}
-				else
-				{
-					tlvs[j].valuelen = data[i];
-				}
-			}
-
-			i += len_byte;
-
-			//store V
-			if(tlvs[j].valuelen != 0)
-			{
-				tlvs[j].pvalue = (uint8_t *)malloc(tlvs[j].valuelen);
-				emv_memset(tlvs[j].pvalue, 0, tlvs[j].valuelen);
-				emv_memcpy(tlvs[j].pvalue, data+i, tlvs[j].valuelen);
-				i += tlvs[j].valuelen;
-			}
-			j++;
-
 		}
+		tlvs[j].tagname = emv_hex2dec(data + i, t_len);
+		i += t_len;
 
-		tlvs[0].childnum = j - 1;
-		return j;
+		/* L */
+		if (i >= data_len)
+		{
+			break;
+		}
+		if (data[i] & 0x80)
+		{
+			nlen = data[i] & 0x7F;
+			if (nlen < 1 || nlen > 3 || i + nlen >= data_len)
+			{
+				break;
+			}
+			v_len = 0;
+			for (k = 1; k <= nlen; k++)
+			{
+				v_len = (v_len << 8) | data[i + k];
+			}
+			len_byte = nlen + 1;
+		}
+		else
+		{
+			v_len = data[i];
+			len_byte = 1;
+		}
+		i += len_byte;
+
+		/* V */
+		if (v_len > (data_len - i))
+		{
+			break;
+		}
+		tlvs[j].valuelen = v_len;
+		if (v_len > 0)
+		{
+			tlvs[j].pvalue = data + i;
+			i += v_len;
+		}
+		j++;
 	}
-	else
-	{
-		return TLV_ERR;
-	}
+
+	tlvs[0].childnum = j - 1;
+	return j;
 }
 
 
@@ -774,7 +848,8 @@ int32_t add_tag_to_tags2readyet(int32_t tagname)
 	add_len = GetTagLength(tagname);
 	emv_dec2hex(tagname, tag_hex, add_len);
 
-	if(data_need)
+	/* P2 fix: create the list on first add (data_need == NULL means cur_len == 0) */
+	if(data_need != NULL || cur_len == 0)
 	{
 		if(cur_len > 0)
 		{
@@ -818,7 +893,8 @@ int32_t add_tag_to_dataneed(int32_t tagname)
 	emv_dec2hex(tagname, tag_hex, add_len);
 	eTRACE_HEX("paypass-info: tag_hex", tag_hex, add_len);
 
-	if(data_need)
+	/* P2 fix: create the list on first add (data_need == NULL means cur_len == 0) */
+	if(data_need != NULL || cur_len == 0)
 	{
 		if(cur_len > 0)
 		{
@@ -862,7 +938,8 @@ int32_t add_tag_to_tags2write_yet_before_gac(int32_t tagname)
 	emv_dec2hex(tagname, tag_hex, add_len);
 	eTRACE_HEX("paypass-info: tag_hex", tag_hex, add_len);
 
-	if(data_need)
+	/* P2 fix: create the list on first add (data_need == NULL means cur_len == 0) */
+	if(data_need != NULL || cur_len == 0)
 	{
 		if(cur_len > 0)
 		{
@@ -915,7 +992,8 @@ int32_t add_tag_to_tags2write_yet_after_gac(int32_t tagname)
 	emv_dec2hex(tagname, tag_hex, add_len);
 	eTRACE_HEX("paypass-info: tag_hex", tag_hex, add_len);
 
-	if(data_need)
+	/* P2 fix: create the list on first add (data_need == NULL means cur_len == 0) */
+	if(data_need != NULL || cur_len == 0)
 	{
 		if(cur_len > 0)
 		{
@@ -951,51 +1029,94 @@ int32_t add_tag_to_tags2write_yet_after_gac(int32_t tagname)
 
 bool data2send_contains_key(int32_t tagname)
 {
-	uint8_t buf[512]={0},tag_hex[3] = {0};
-	uint8_t *data_need,*tag_add;
-	int32_t cur_len,tag_len,len_byte,i;
+	uint8_t tag_hex[5] = {0};
+	uint8_t *data_need;
+	int32_t cur_len, tag_len, i, item_tag_len, len_byte, value_len, n, k;
 
 	data_need = appdata_find(TAG_FF8104_DATA_TO_SEND, &cur_len);
-	if(cur_len > sizeof(buf))
+	if(data_need == NULL || cur_len <= 0)
 	{
-		return EMV_ERR;
+		return false;
 	}
 
-	tag_len = GetTagLength(tagname);
-	eTRACE("paypass-info: tag_len = %d", tag_len);
+	tag_len = GetTagLength((uint32_t)tagname);
+	if(tag_len < 1 || tag_len > (int32_t)sizeof(tag_hex))
+	{
+		return false;
+	}
+	emv_dec2hex((uint32_t)tagname, tag_hex, tag_len);
 
-	emv_dec2hex(tagname, tag_hex, tag_len);
+	eTRACE("paypass-info: tag_len = %d", tag_len);
 	eTRACE_HEX("paypass-info: tag_hex", tag_hex, tag_len);
 
+	/* P2 fix: walk the stored TLV list properly (the old code compared at every
+	 * byte offset, never skipped L/V and had an empty if-block, so it could not
+	 * find any tag). */
 	i = 0;
 	while (i < cur_len)
 	{
-		if(!emv_memcmp(data_need+i, tag_hex, tag_len))
+		item_tag_len = 1;
+		if((data_need[i] & 0x1F) == 0x1F)
+		{
+			if((i + 1) >= cur_len)
+			{
+				break;
+			}
+			item_tag_len = 2;
+			if(data_need[i+1] & 0x80)
+			{
+				if((i + 2) >= cur_len)
+				{
+					break;
+				}
+				item_tag_len = 3;
+			}
+		}
+		if((i + item_tag_len) > cur_len)
+		{
+			break;
+		}
+
+		if(item_tag_len == tag_len && !emv_memcmp(data_need + i, tag_hex, (uint32_t)tag_len))
 		{
 			return true;
 		}
-		//skip T
-		if((data_need[i] & 0x1F) == 0x1F)
+
+		/* skip T */
+		i += item_tag_len;
+		if(i >= cur_len)
 		{
-			if((data_need[i+1] & 0x80) == 0x80)
+			break;
+		}
+
+		/* skip L */
+		if(data_need[i] & 0x80)
+		{
+			n = data_need[i] & 0x7F;
+			if(n < 1 || n > 3 || (i + n) >= cur_len)
 			{
-				i += 3;
+				break;
 			}
-			else
+			value_len = 0;
+			for(k = 1; k <= n; k++)
 			{
-				i += 2;
+				value_len = (value_len << 8) | data_need[i + k];
 			}
+			len_byte = n + 1;
 		}
 		else
 		{
-			i += 1;
+			value_len = data_need[i];
+			len_byte = 1;
 		}
+		i += len_byte;
 
-		if(data_need[i] & 0x80)
+		/* skip V */
+		if(value_len < 0 || value_len > (cur_len - i))
 		{
-
+			break;
 		}
-
+		i += value_len;
 	}
 
 	return false;
@@ -1022,21 +1143,19 @@ int32_t add_tlv_to_tags2write_yet_after_gac(int32_t tagname, int32_t len, uint8_
 	emv_dec2hex(tagname, tag_hex, tag_len);
 	eTRACE_HEX("paypass-info: tag_hex", tag_hex, tag_len);
 
-	if(len > 127)
+	uint8_t lenbuf[4]={0};
+	len_byte = tlv_set_len(len, lenbuf);
+	if(len_byte < 0)
 	{
-		len_byte = 2;
-	}
-	else
-	{
-		len_byte = 1;
+		return EMV_ERR;
 	}
 
 	if (data_need && cur_len > 0)
 	{
 		while (offset < cur_len)
 		{
-			int32_t parsed_tag = 0;
-            int32_t parsed_tag_len = tlv_get_tag(data_need + offset, &parsed_tag);
+			uint32_t parsed_tag = 0;
+            int32_t parsed_tag_len = tlv_get_tag_bounded(data_need + offset, cur_len - offset, &parsed_tag);
             if (parsed_tag_len <= 0)
 			{
 				break;
@@ -1045,8 +1164,8 @@ int32_t add_tlv_to_tags2write_yet_after_gac(int32_t tagname, int32_t len, uint8_
             offset += parsed_tag_len;
 
 			int32_t value_len = 0;
-            int32_t value_len_bytes = tlv_get_len(data_need + offset, &value_len);
-            if (value_len_bytes <= 0)
+            int32_t value_len_bytes = tlv_get_len_bounded(data_need + offset, cur_len - offset, &value_len);
+            if (value_len_bytes <= 0 || value_len > (cur_len - offset - value_len_bytes))
 			{
 				break;
 			}
@@ -1063,7 +1182,8 @@ int32_t add_tlv_to_tags2write_yet_after_gac(int32_t tagname, int32_t len, uint8_
 	}
 
 
-	if(data_need)
+	/* P2 fix: create the list on first add (data_need == NULL means cur_len == 0) */
+	if(data_need != NULL || cur_len == 0)
 	{
 		if(cur_len > 0)
 		{
@@ -1077,15 +1197,8 @@ int32_t add_tlv_to_tags2write_yet_after_gac(int32_t tagname, int32_t len, uint8_
 			emv_memcpy(buf+cur_len, tag_hex, tag_len);
 			cur_len += tag_len;
 			//L
-			if(len_byte > 1)
-			{
-				buf[cur_len++] = 0x81;
-				buf[cur_len++] = (uint8_t)len;
-			}
-			else
-			{
-				buf[cur_len++] = (uint8_t)len;
-			}
+			emv_memcpy(buf+cur_len, lenbuf, (uint32_t)len_byte);
+			cur_len += len_byte;
 			//V
 			if(len > 0 && value != NULL)
 			{
@@ -1107,15 +1220,8 @@ int32_t add_tlv_to_tags2write_yet_after_gac(int32_t tagname, int32_t len, uint8_
 			emv_memcpy(buf+cur_len, tag_hex, tag_len);
 			cur_len += tag_len;
 			//L
-			if(len_byte > 1)
-			{
-				buf[cur_len++] = 0x81;
-				buf[cur_len++] = (uint8_t)len;
-			}
-			else
-			{
-				buf[cur_len++] = (uint8_t)len;
-			}
+			emv_memcpy(buf+cur_len, lenbuf, (uint32_t)len_byte);
+			cur_len += len_byte;
 			//V
 			if(len > 0 && value != NULL)
 			{
@@ -1152,21 +1258,19 @@ int32_t add_tlv_to_tags2write_yet_before_gac(int32_t tagname, int32_t len, uint8
 	emv_dec2hex(tagname, tag_hex, tag_len);
 	eTRACE_HEX("paypass-info: tag_hex", tag_hex, tag_len);
 
-	if(len > 127)
+	uint8_t lenbuf[4]={0};
+	len_byte = tlv_set_len(len, lenbuf);
+	if(len_byte < 0)
 	{
-		len_byte = 2;
-	}
-	else
-	{
-		len_byte = 1;
+		return EMV_ERR;
 	}
 
 	if (data_need && cur_len > 0)
 	{
 		while (offset < cur_len)
 		{
-			int32_t parsed_tag = 0;
-            int32_t parsed_tag_len = tlv_get_tag(data_need + offset, &parsed_tag);
+			uint32_t parsed_tag = 0;
+            int32_t parsed_tag_len = tlv_get_tag_bounded(data_need + offset, cur_len - offset, &parsed_tag);
             if (parsed_tag_len <= 0)
 			{
 				break;
@@ -1175,8 +1279,8 @@ int32_t add_tlv_to_tags2write_yet_before_gac(int32_t tagname, int32_t len, uint8
             offset += parsed_tag_len;
 
 			int32_t value_len = 0;
-            int32_t value_len_bytes = tlv_get_len(data_need + offset, &value_len);
-            if (value_len_bytes <= 0)
+            int32_t value_len_bytes = tlv_get_len_bounded(data_need + offset, cur_len - offset, &value_len);
+            if (value_len_bytes <= 0 || value_len > (cur_len - offset - value_len_bytes))
 			{
 				break;
 			}
@@ -1193,7 +1297,8 @@ int32_t add_tlv_to_tags2write_yet_before_gac(int32_t tagname, int32_t len, uint8
 	}
 
 
-	if(data_need)
+	/* P2 fix: create the list on first add (data_need == NULL means cur_len == 0) */
+	if(data_need != NULL || cur_len == 0)
 	{
 		if(cur_len > 0)
 		{
@@ -1207,15 +1312,8 @@ int32_t add_tlv_to_tags2write_yet_before_gac(int32_t tagname, int32_t len, uint8
 			emv_memcpy(buf+cur_len, tag_hex, tag_len);
 			cur_len += tag_len;
 			//L
-			if(len_byte > 1)
-			{
-				buf[cur_len++] = 0x81;
-				buf[cur_len++] = (uint8_t)len;
-			}
-			else
-			{
-				buf[cur_len++] = (uint8_t)len;
-			}
+			emv_memcpy(buf+cur_len, lenbuf, (uint32_t)len_byte);
+			cur_len += len_byte;
 			//V
 			if(len > 0 && value != NULL)
 			{
@@ -1237,15 +1335,8 @@ int32_t add_tlv_to_tags2write_yet_before_gac(int32_t tagname, int32_t len, uint8
 			emv_memcpy(buf+cur_len, tag_hex, tag_len);
 			cur_len += tag_len;
 			//L
-			if(len_byte > 1)
-			{
-				buf[cur_len++] = 0x81;
-				buf[cur_len++] = (uint8_t)len;
-			}
-			else
-			{
-				buf[cur_len++] = (uint8_t)len;
-			}
+			emv_memcpy(buf+cur_len, lenbuf, (uint32_t)len_byte);
+			cur_len += len_byte;
 			//V
 			if(len > 0 && value != NULL)
 			{
@@ -1282,21 +1373,19 @@ int32_t add_tlv_to_data2send(int32_t tagname, int32_t len, uint8_t *value)
 	emv_dec2hex(tagname, tag_hex, tag_len);
 	eTRACE_HEX("paypass-info: tag_hex", tag_hex, tag_len);
 
-	if(len > 127)
+	uint8_t lenbuf[4]={0};
+	len_byte = tlv_set_len(len, lenbuf);
+	if(len_byte < 0)
 	{
-		len_byte = 2;
-	}
-	else
-	{
-		len_byte = 1;
+		return EMV_ERR;
 	}
 
 	if (data_need && cur_len > 0)
 	{
 		while (offset < cur_len)
 		{
-			int32_t parsed_tag = 0;
-            int32_t parsed_tag_len = tlv_get_tag(data_need + offset, &parsed_tag);
+			uint32_t parsed_tag = 0;
+            int32_t parsed_tag_len = tlv_get_tag_bounded(data_need + offset, cur_len - offset, &parsed_tag);
             if (parsed_tag_len <= 0)
 			{
 				break;
@@ -1305,8 +1394,8 @@ int32_t add_tlv_to_data2send(int32_t tagname, int32_t len, uint8_t *value)
             offset += parsed_tag_len;
 
 			int32_t value_len = 0;
-            int32_t value_len_bytes = tlv_get_len(data_need + offset, &value_len);
-            if (value_len_bytes <= 0)
+            int32_t value_len_bytes = tlv_get_len_bounded(data_need + offset, cur_len - offset, &value_len);
+            if (value_len_bytes <= 0 || value_len > (cur_len - offset - value_len_bytes))
 			{
 				break;
 			}
@@ -1323,7 +1412,8 @@ int32_t add_tlv_to_data2send(int32_t tagname, int32_t len, uint8_t *value)
 	}
 
 
-	if(data_need)
+	/* P2 fix: create the list on first add (data_need == NULL means cur_len == 0) */
+	if(data_need != NULL || cur_len == 0)
 	{
 		if(cur_len > 0)
 		{
@@ -1337,15 +1427,8 @@ int32_t add_tlv_to_data2send(int32_t tagname, int32_t len, uint8_t *value)
 			emv_memcpy(buf+cur_len, tag_hex, tag_len);
 			cur_len += tag_len;
 			//L
-			if(len_byte > 1)
-			{
-				buf[cur_len++] = 0x81;
-				buf[cur_len++] = (uint8_t)len;
-			}
-			else
-			{
-				buf[cur_len++] = (uint8_t)len;
-			}
+			emv_memcpy(buf+cur_len, lenbuf, (uint32_t)len_byte);
+			cur_len += len_byte;
 			//V
 			if(len > 0 && value != NULL)
 			{
@@ -1367,15 +1450,8 @@ int32_t add_tlv_to_data2send(int32_t tagname, int32_t len, uint8_t *value)
 			emv_memcpy(buf+cur_len, tag_hex, tag_len);
 			cur_len += tag_len;
 			//L
-			if(len_byte > 1)
-			{
-				buf[cur_len++] = 0x81;
-				buf[cur_len++] = (uint8_t)len;
-			}
-			else
-			{
-				buf[cur_len++] = (uint8_t)len;
-			}
+			emv_memcpy(buf+cur_len, lenbuf, (uint32_t)len_byte);
+			cur_len += len_byte;
 			//V
 			if(len > 0 && value != NULL)
 			{
@@ -1411,7 +1487,8 @@ int32_t add_tag_to_data2send(int32_t tagname)
 	emv_dec2hex(tagname, tag_hex, add_len);
 	eTRACE_HEX("paypass-info: tag_hex", tag_hex, add_len);
 
-	if(data_need)
+	/* P2 fix: create the list on first add (data_need == NULL means cur_len == 0) */
+	if(data_need != NULL || cur_len == 0)
 	{
 		if(cur_len > 0)
 		{
@@ -1464,10 +1541,22 @@ int32_t sdol_packet(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t val_max_
                 {
                     return -1;
                 }
+                if (i >= dollen)
+                {
+                    return -1;
+                }
             } while (another_byte_follow(dol[i]));
+        }
+        if (i >= dollen)
+        {
+            return -1;
         }
         tagname = tagname | dol[i++];
 
+        if (i >= dollen)
+        {
+            return -1;
+        }
         reqlen = dol[i++] & 0x7F;
         if (lenlen_exceed_one(dol[i - 1]))
         {
@@ -1479,13 +1568,17 @@ int32_t sdol_packet(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t val_max_
             reqlen = 0;
             while (j > 0)
             {
+                if (i >= dollen)
+                {
+                    return -1;
+                }
                 reqlen |= dol[i++] << (--j * 8);
             }
         }
 
         eTRACE("fmt = [%d] tagname = [%02X], reqlen = [%d]", fmt, tagname, reqlen);
         eTRACE("i = [%d] dollen = [%d]", i, dollen);
-        if (i > dollen)
+        if (i > dollen || reqlen < 0 || reqlen > (val_max_len - val_len))
         {
             return -1;
         }
@@ -1545,13 +1638,13 @@ int32_t emvdol_packet(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t val_ma
 {
     int32_t i, j, fmt;
     int32_t reqlen, reallen, val_len;
-    int32_t tagname;
+    uint32_t tagname;
     uint8_t* pdata;
 	EMV_TAG_ITEM item={0};
 
-    if (dol == NULL || val == NULL)
+    if (dol == NULL || val == NULL || dollen <= 0 || val_max_len <= 0)
     {
-        return 0;
+        return -1;
 	}
 
     val_len = 0;
@@ -1571,18 +1664,45 @@ int32_t emvdol_packet(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t val_ma
                 {
                     return -1;
                 }
+                if (i >= dollen)	/* tag must be followed by the DOL length byte */
+                {
+                    return -1;
+                }
             } while (another_byte_follow(dol[i]));
         }
-        tagname = tagname | dol[i++];
-
-        reqlen = dol[i++];
-
-        eTRACE("fmt = [%d] tagname = [%02X], reqlen = [%d]", fmt, tagname, reqlen);
-        eTRACE("i = [%d] dollen = [%d]", i, dollen);
-        if (i > dollen)
+        if (i >= dollen)
         {
             return -1;
         }
+        tagname = tagname | dol[i++];
+
+        if (i >= dollen)
+        {
+            return -1;
+        }
+        reqlen = dol[i++];
+
+        /*
+         * P0 fix: a DOL entry length is a single byte whose bit 8 is RFU
+         * (EMV Book 3 5.4). Anything >= 0x80 is an invalid/unsupported DOL.
+         */
+        if (reqlen > 0x7F)
+        {
+            eTRACE("paypass-error: invalid DOL length byte [%02X]", reqlen);
+            return -1;
+        }
+        /*
+         * P0 fix: validate the remaining output capacity before writing, so a
+         * card controlled SDOL (9F3F) can never overflow the caller buffers.
+         */
+        if (val_len + reqlen > val_max_len)
+        {
+            eTRACE("paypass-error: DOL data overflow [%d > %d]", val_len + reqlen, val_max_len);
+            return -1;
+        }
+
+        eTRACE("fmt = [%d] tagname = [%02X], reqlen = [%d]", fmt, tagname, reqlen);
+        eTRACE("i = [%d] dollen = [%d]", i, dollen);
 
 		pdata = appdata_find(tagname, &reallen);
         eTRACE("reallen = [%d]", reallen);
@@ -1662,10 +1782,22 @@ int32_t emvdol_packet_emv(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t va
                 {
                     return -1;
                 }
+                if (i >= dollen)
+                {
+                    return -1;
+                }
             } while (another_byte_follow(dol[i]));
+        }
+        if (i >= dollen)
+        {
+            return -1;
         }
         tagname = tagname | dol[i++];
 
+        if (i >= dollen)
+        {
+            return -1;
+        }
         reqlen = dol[i++] & 0x7F;
         if (lenlen_exceed_one(dol[i - 1]))
         {
@@ -1677,13 +1809,17 @@ int32_t emvdol_packet_emv(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t va
             reqlen = 0;
             while (j > 0)
             {
+                if (i >= dollen)
+                {
+                    return -1;
+                }
                 reqlen |= dol[i++] << (--j * 8);
             }
         }
 
         eTRACE("fmt = [%d] tagname = [%02X], reqlen = [%d]", fmt, tagname, reqlen);
         eTRACE("i = [%d] dollen = [%d]", i, dollen);
-        if (i > dollen)
+        if (i > dollen || reqlen < 0 || reqlen > (val_max_len - val_len))
         {
             return -1;
         }
@@ -1729,6 +1865,8 @@ int32_t emvdol_packet_tlv(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t va
 {
     int32_t i, j, k, tlvlen;
     int32_t reqlen;
+    int32_t hdrlen;
+    uint8_t hdr[8];                     /* max tag(4) + max length(1+3) bytes */
 
     if (dol == NULL || val == NULL || tlv == NULL || dollen <= 0 || vallen <= 0 || tlvlmt <= 0)
     {
@@ -1737,6 +1875,7 @@ int32_t emvdol_packet_tlv(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t va
 
     for (i = 0, k = 0, tlvlen = 0; i < dollen && k < vallen; )
     {
+        hdrlen = 0;
         if (is_constructed(dol[i]))
         {
             return -1;
@@ -1746,21 +1885,35 @@ int32_t emvdol_packet_tlv(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t va
             j = 0;
             do
             {
-                tlv[tlvlen++] = dol[i++];
+                if (i >= dollen || hdrlen >= (int32_t)sizeof(hdr))
+                {
+                    return -1;
+                }
+                hdr[hdrlen++] = dol[i++];
                 if (++j == 4)
+                {
+                    return -1;
+                }
+                if (i >= dollen)
                 {
                     return -1;
                 }
             } while (another_byte_follow(dol[i]));
         }
-        tlv[tlvlen++] = dol[i++];
-        eTRACE_HEX("tlv", tlv, tlvlen);
-
-        tlv[tlvlen++] = dol[i];
+        if (i >= dollen || hdrlen >= (int32_t)sizeof(hdr))
+        {
+            return -1;
+        }
+        hdr[hdrlen++] = dol[i++];                   /* last tag byte */
+        if (i >= dollen || hdrlen >= (int32_t)sizeof(hdr))
+        {
+            return -1;
+        }
+        hdr[hdrlen++] = dol[i];                     /* first length byte */
         reqlen = dol[i++] & 0x7F;
         if (lenlen_exceed_one(dol[i - 1]))
         {
-            if (reqlen > 4)
+            if (reqlen > 3)
             {
                 return -1;
             }
@@ -1768,26 +1921,38 @@ int32_t emvdol_packet_tlv(uint8_t *dol, int32_t dollen, uint8_t *val, int32_t va
             reqlen = 0;
             while (j > 0)
             {
-                tlv[tlvlen++] = dol[i];
-                reqlen |= dol[i++] << (--j * 8);
+                uint32_t lenbyte;
+                if (i >= dollen || hdrlen >= (int32_t)sizeof(hdr))
+                {
+                    return -1;
+                }
+                hdr[hdrlen++] = dol[i];
+                lenbyte = dol[i++];
+                reqlen |= (int32_t)(lenbyte << (--j * 8));
             }
         }
-        eTRACE_HEX("tlv", tlv, tlvlen);
-        eTRACE("i = %d", i);
-        if (i > dollen || tlvlen > tlvlmt)
+
+        /*
+         * P1 fix: compute the complete TLV length and validate BOTH the output
+         * limit and the remaining input before writing a single byte, so a
+         * malformed/oversized DOL can never produce a partial TLV or overflow.
+         */
+        if (i > dollen || reqlen < 0 || reqlen > (vallen - k))
+        {
+            return -1;
+        }
+        if (hdrlen > (tlvlmt - tlvlen) || reqlen > (tlvlmt - tlvlen - hdrlen))
         {
             return -1;
         }
 
+        emv_memcpy(tlv + tlvlen, hdr, hdrlen);
+        tlvlen += hdrlen;
         emv_memcpy(tlv + tlvlen, val + k, reqlen);
         k += reqlen;
         tlvlen += reqlen;
         eTRACE_HEX("tlv", tlv, tlvlen);
         eTRACE("k = %d", k);
-        if (k > vallen || tlvlen > tlvlmt)
-        {
-            return -1;
-        }
     }
     eTRACE("i = %d, k = %d", i, k);
     if (i == dollen && k == vallen)
@@ -1889,6 +2054,10 @@ int cdol_packet(uint8_t *dol, int dollen, uint8_t *val, int val_max_len)
                 {
                     return -1;
                 }
+                if (i >= dollen)
+                {
+                    return -1;
+                }
             } while (another_byte_follow(dol[i]));
         }
         tagname = tagname | dol[i++];
@@ -1897,7 +2066,7 @@ int cdol_packet(uint8_t *dol, int dollen, uint8_t *val, int val_max_len)
 
         eTRACE("fmt = [%d] tagname = [%02X], reqlen = [%d]", fmt, tagname, reqlen);
         eTRACE("i = [%d] dollen = [%d]", i, dollen);
-        if (i > dollen)
+        if (i > dollen || reqlen < 0 || reqlen > (val_max_len - val_len))
         {
             return -1;
         }
@@ -1984,6 +2153,10 @@ int udol_packet(uint8_t *dol, int dollen, uint8_t *val, int val_max_len)
                 {
                     return -1;
                 }
+                if (i >= dollen)
+                {
+                    return -1;
+                }
             } while (another_byte_follow(dol[i]));
         }
         tagname = tagname | dol[i++];
@@ -1992,7 +2165,7 @@ int udol_packet(uint8_t *dol, int dollen, uint8_t *val, int val_max_len)
 
         eTRACE("fmt = [%d] tagname = [%02X], reqlen = [%d]", fmt, tagname, reqlen);
         eTRACE("i = [%d] dollen = [%d]", i, dollen);
-        if (i > dollen)
+        if (i > dollen || reqlen < 0 || reqlen > (val_max_len - val_len))
         {
             return -1;
         }

@@ -677,10 +677,9 @@ uint8_t emv_taglib_read_UpdateCondition(uint32_t tag, uint32_t belong, uint8_t m
             item->Format  = g_emv_tag_lib[pos].Format;
             item->belong  = g_emv_tag_lib[pos].belong;
         }
-		else
-		{
-            item->Tag     = g_emv_tag_lib[pos].Tag;
-		}
+        /* P2 fix: on "not found" pos stays -1 and the old else branch read
+         * g_emv_tag_lib[-1]. item is already zeroed, which is the documented
+         * "not found" value; nothing else needs to be written here. */
 	}
 
 	return readRes;
@@ -833,20 +832,22 @@ int32_t GetItemFromList(uint32_t List, EMV_TLVOBJ *item_arry, int32_t size)
 
 int32_t GetTagFromList(uint32_t List, uint32_t *item_arry, int32_t size)
 {
-	uint8_t *list_ptr, *tmpbuf;
-	int32_t len,i,tag_len,counter=0;
+	uint8_t *list_ptr;
+	int32_t len, i = 0, tag_len, counter = 0;
 
-	if(item_arry == NULL || size < 0)
+	if(item_arry == NULL || size <= 0)
 	{
 		return 0;
 	}
 
 	list_ptr = appdata_find(List, &len);
-	if(!list_ptr)
+	if(list_ptr == NULL || len <= 0)
 	{
 		return 0;
 	}
 
+	/* P2 fix: i was used uninitialized (undefined loop bound). All reads are
+	 * now bounded by the stored list length. */
 	while (i < len)
 	{
 		if(counter >= size)
@@ -856,8 +857,16 @@ int32_t GetTagFromList(uint32_t List, uint32_t *item_arry, int32_t size)
 
 		if((list_ptr[i] & 0x1F) == 0x1F)
 		{
+			if((i + 1) >= len)
+			{
+				break;
+			}
 			if((list_ptr[i+1] & 0x80) == 0x80)
 			{
+				if((i + 2) >= len)
+				{
+					break;
+				}
 				tag_len = 3;
 			}
 			else
@@ -868,6 +877,10 @@ int32_t GetTagFromList(uint32_t List, uint32_t *item_arry, int32_t size)
 		else
 		{
 			tag_len = 1;
+		}
+		if((i + tag_len) > len)
+		{
+			break;
 		}
 		item_arry[counter++] = emv_hex2dec(list_ptr+i, tag_len);
 		i += tag_len;
@@ -1287,38 +1300,63 @@ int32_t GetTagLength(uint32_t tag)
     return length;
 }
 
+/*
+ * Returns the encoded tag bytes in a module static buffer.
+ *
+ * P1 fix (heap removal): the previous implementation malloc()ed the result and
+ * documented "free outside by caller", which is unusable in this kernel (no
+ * heap allowed, callers have no free() either).
+ * Ownership: the returned pointer belongs to this module and is reused by the
+ * next GetTagName() call; the caller must copy it if the value has to survive.
+ * Capacity: a valid EMV tag is 1..4 bytes (4 is the decoder maximum); an
+ * invalid tag (0 or more than 4 bytes) returns NULL.
+ */
 uint8_t *GetTagName(uint32_t ui_tag)
 {
+	static uint8_t s_tag_name[4];
 	int32_t length = GetTagLength(ui_tag);
-	uint8_t *uc_tag;
 	int32_t i;
 
-	uc_tag = (uint8_t *)malloc(length);
-	emv_memset(uc_tag, 0, length);
+	if(length < 1 || length > (int32_t)sizeof(s_tag_name))
+	{
+		return NULL;
+	}
+
+	emv_memset(s_tag_name, 0, sizeof(s_tag_name));
 
 	for(i = 0; i < length; i++)
 	{
-		uc_tag[i] = (uint8_t)((ui_tag >> (8 * (length - i - 1))) & 0xFF);
+		s_tag_name[i] = (uint8_t)((ui_tag >> (8 * (length - i - 1))) & 0xFF);
 	}
 
-	return uc_tag;
+	return s_tag_name;
 }
 
-//this function use malloc,need to free outside by caller
+/*
+ * Returns a copy of the stored tag value.
+ *
+ * P1 fix (heap removal): tlv.pvalue now points to a module static buffer
+ * instead of malloc()ed memory (the old contract required the caller to free a
+ * structure member, which no caller can do here).
+ * Ownership: the buffer is reused by the next GetTLV() call; the caller must
+ * copy the value if it has to survive. Capacity: EMV_CFG_ICC_RECV_MAXLEN bytes;
+ * a longer stored value is not returned (zeroed TLV is returned instead).
+ */
 EMV_TLVOBJ GetTLV(uint32_t tag)
 {
+	static uint8_t s_tlv_value[EMV_CFG_ICC_RECV_MAXLEN];
 	uint8_t *ptmp;
 	int32_t len;
 	EMV_TLVOBJ tlv = {0};
 
 	ptmp = appdata_find(tag, &len);
-	if(ptmp != NULL && len > 0)
+	if(ptmp != NULL && len > 0 && len <= (int32_t)sizeof(s_tlv_value))
 	{
 		tlv.tagname = tag;
 		tlv.valuelen = len;
-		tlv.pvalue = (uint8_t *)malloc(tlv.valuelen);
-		emv_memset(tlv.pvalue, 0, tlv.valuelen);
-		emv_memcpy(tlv.pvalue, ptmp, tlv.valuelen);
+		tlv.pvalue = s_tlv_value;
+		emv_memset(tlv.pvalue, 0, (uint32_t)tlv.valuelen);
+		emv_memcpy(tlv.pvalue, ptmp, (uint32_t)tlv.valuelen);
 
 		return tlv;
 	}
@@ -1344,9 +1382,18 @@ int32_t GetLength(uint32_t tag)
 
 bool IsTagPrivateClass(uint32_t tag_dec)
 {
-	uint8_t tag_hex[3] ={0};
+	uint8_t tag_hex[5] ={0};
+	int32_t tag_len = GetTagLength(tag_dec);
 
-	emv_dec2hex(tag_dec, tag_hex, 3);
+	/* P3 fix: the old code always decoded 3 bytes, which both read past small
+	 * tags (leading 0x00 => always false) and wrote 1 byte past the 3 byte
+	 * buffer for 4 byte tags. Decode the real tag length instead. */
+	if(tag_len < 1 || tag_len > (int32_t)sizeof(tag_hex))
+	{
+		return false;
+	}
+
+	emv_dec2hex(tag_dec, tag_hex, tag_len);
 
 	if(0xC0 == (tag_hex[0] & 0xC0))
 	{
@@ -1373,31 +1420,67 @@ uint8_t GetTagUpdateCondition(uint32_t tag, uint32_t belong)
 
 int32_t OutputTLV(EMV_TLVOBJ *tlvs, int32_t tlv_size, uint8_t *output, int32_t output_size)
 {
-	int32_t i=0,pos,tag_len,j;
-	uint8_t tag[3]={0};
+	int32_t i=0,pos,tag_len,len_len,childnum;
+	uint8_t tag[5]={0};
+	uint8_t lenbuf[4]={0};
 
-	if(tlvs == NULL || tlv_size < 0 || output == NULL || output_size < 0)
+	/* P2 fix: tlv_size / output_size are part of the API contract and were
+	 * previously ignored (tlvs[1] was read without checking tlv_size, length
+	 * was written as one raw byte, no capacity check before the writes). */
+	if(tlvs == NULL || output == NULL || tlv_size < 2 || output_size <= 0)
 	{
 		return EMV_FAIL;
 	}
 
-	eTRACE("paypass-info: tlvs[1].childnum = %d", tlvs[1].childnum);
-
-	for(pos = 2; pos < tlvs[1].childnum+2; pos++)
+	childnum = tlvs[1].childnum;
+	if(childnum < 0)
 	{
+		return EMV_FAIL;
+	}
+
+	eTRACE("paypass-info: tlvs[1].childnum = %d", childnum);
+
+	for(pos = 2; pos < childnum+2; pos++)
+	{
+		if(pos >= tlv_size)
+		{
+			return EMV_FAIL;
+		}
+
 		tag_len = GetTagLength(tlvs[pos].tagname);
+		if(tag_len < 1 || tag_len > (int32_t)sizeof(tag))
+		{
+			return EMV_FAIL;
+		}
 
 		emv_memset(tag, 0, sizeof(tag));
-
 		emv_dec2hex(tlvs[pos].tagname, tag, tag_len);
 
 		eTRACE_HEX("paypass-info: OutputTLV tag", tag, tag_len);
 
-		emv_memcpy(output+i, tag, tag_len);
+		len_len = tlv_set_len(tlvs[pos].valuelen, lenbuf);
+		if(len_len < 0)
+		{
+			return EMV_FAIL;
+		}
+
+		/* capacity check BEFORE writing any byte */
+		if(tag_len > (output_size - i) || len_len > (output_size - i - tag_len) ||
+		   tlvs[pos].valuelen < 0 || tlvs[pos].valuelen > (output_size - i - tag_len - len_len) ||
+		   (tlvs[pos].valuelen > 0 && tlvs[pos].pvalue == NULL))
+		{
+			return EMV_FAIL;
+		}
+
+		emv_memcpy(output+i, tag, (uint32_t)tag_len);
 		i += tag_len;
-		output[i++] = tlvs[pos].valuelen;
-		emv_memcpy(output+i, tlvs[pos].pvalue, tlvs[pos].valuelen);
-		i += tlvs[pos].valuelen;
+		emv_memcpy(output+i, lenbuf, (uint32_t)len_len);
+		i += len_len;
+		if(tlvs[pos].valuelen > 0)
+		{
+			emv_memcpy(output+i, tlvs[pos].pvalue, (uint32_t)tlvs[pos].valuelen);
+			i += tlvs[pos].valuelen;
+		}
 	}
 
 	return i;
@@ -1527,6 +1610,14 @@ bool ParseAndStoreCardResponse(uint8_t *resp, int32_t resp_len, uint32_t tmplate
 	int32_t ret, i;
 
 	eTRACE("paypass-info: start ParseAndStoreCardResponse");
+
+	/* P1/P2 fix: required context checks before touching resp/tlvs.
+	 * emvtlv_decode(SINGLE_TLVOBJ) needs tlvs[0] (root) and tlvs[1] (template). */
+	if(resp == NULL || resp_len <= 0 || tlvs == NULL || tlvs_size < 2)
+	{
+		return false;
+	}
+
 	ret = emvtlv_decode(resp, resp_len, tlvs, tlvs_size, SINGLE_TLVOBJ);
 
 	eTRACE("paypass-info: emvtlv_decode ret = %d", ret);
@@ -1539,47 +1630,52 @@ bool ParseAndStoreCardResponse(uint8_t *resp, int32_t resp_len, uint32_t tmplate
 	{
 		return false;
 	}
-	else
-	{
-		for(i = 1; i < tlvs[0].childnum+1; i++)
-		{
-			ret = emv_taglib_ReadItemWithExactMatch(tlvs[i].tagname, EMVTAGTYPE_PAYPASS, &item);
-			eTRACE("paypass-info: emv_taglib_ReadItemWithExactMatch ret = %d", ret);
 
-			if(EMVTAGUPDATECONDITION_RA & item.Update)
+	/* the response must consist of exactly one template of the expected type */
+	if(tlvs[1].tagname != tmplate || tlvs[0].childnum < 0)
+	{
+		eTRACE("paypass-info: unexpected template [%02X] != [%02X]", tlvs[1].tagname, tmplate);
+		return false;
+	}
+
+	for(i = 1; (i <= tlvs[0].childnum) && (i < tlvs_size); i++)
+	{
+		ret = emv_taglib_ReadItemWithExactMatch(tlvs[i].tagname, EMVTAGTYPE_PAYPASS, &item);
+		eTRACE("paypass-info: emv_taglib_ReadItemWithExactMatch ret = %d", ret);
+
+		if(EMVTAGUPDATECONDITION_RA & item.Update)
+		{
+			eTRACE("paypass-info: flag35");
+			if(IsKnown(tlvs[i].tagname))
 			{
-				eTRACE("paypass-info: flag35");
-				if(IsKnown(tlvs[i].tagname))
+				eTRACE("paypass-info: flag36");
+				if((IsNotPresent(tlvs[i].tagname) || IsEmpty(tlvs[i].tagname)) && \
+				   (tlvs[i].valuelen >= item.minLen && tlvs[i].valuelen <= item.maxLen) && \
+				   IsTagIncludeTemplateValid(tlvs[i].tagname, tmplate, command))
 				{
-					eTRACE("paypass-info: flag36");
-					if((IsNotPresent(tlvs[i].tagname) || IsEmpty(tlvs[i].tagname)) && \
-					   (tlvs[i].valuelen >= item.minLen && tlvs[i].valuelen <= item.maxLen) && \
-					   IsTagIncludeTemplateValid(tlvs[i].tagname, tmplate, command))
-					{
-						eTRACE("paypass-info: flag37");
-						appdata_save(tlvs[i].tagname, tlvs[i].pvalue, tlvs[i].valuelen, OVERRIDED);
-						eTRACE("paypass-info: flag38");
-					}
-					else
-					{
-						return false;
-					}
+					eTRACE("paypass-info: flag37");
+					appdata_save(tlvs[i].tagname, tlvs[i].pvalue, tlvs[i].valuelen, OVERRIDED);
+					eTRACE("paypass-info: flag38");
 				}
 				else
 				{
-					eTRACE("paypass-info: flag39");
-					if(IsEmpty(tlvs[i].tagname))
-					{
-						appdata_save(tlvs[i].tagname, tlvs[i].pvalue, tlvs[i].valuelen, OVERRIDED);
-					}
-					else
-					{
-						return false;
-					}
+					return false;
+				}
+			}
+			else
+			{
+				eTRACE("paypass-info: flag39");
+				if(IsEmpty(tlvs[i].tagname))
+				{
+					appdata_save(tlvs[i].tagname, tlvs[i].pvalue, tlvs[i].valuelen, OVERRIDED);
+				}
+				else
+				{
+					return false;
 				}
 			}
 		}
-
-		return true;
 	}
+
+	return true;
 }

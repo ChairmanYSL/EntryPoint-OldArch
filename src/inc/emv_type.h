@@ -589,7 +589,6 @@ typedef struct {
     uint8_t rrp_accuracy_threshold[2];                   /* [DF8136] */
 } EMV_TERMPARAM;
 typedef struct {
-    EMV_TERMPARAM term;                                  /* shared terminal parameters */
 
     uint8_t aid[16];                                     /* [9F06] */
     uint8_t aid_len;

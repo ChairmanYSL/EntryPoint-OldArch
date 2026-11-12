@@ -155,9 +155,9 @@ int outcome_other_card(unsigned char data_record, unsigned char receipt)
 
 	if(lang_pre_ptr && lang_pre_len > 0)
 	{
-		if(lang_pre_len > sizeof(lang_pre_ptr))
+		if(lang_pre_len > sizeof(lang_pre))
 		{
-			lang_pre_len = sizeof(lang_pre_ptr);
+			lang_pre_len = sizeof(lang_pre);
 		}
 		emv_memcpy(lang_pre, lang_pre_ptr, lang_pre_len);
 	}
@@ -269,9 +269,9 @@ int outcome_try_again_end_application()
 
 	if(lang_pre_ptr && lang_pre_len > 0)
 	{
-		if(lang_pre_len > sizeof(lang_pre_ptr))
+		if(lang_pre_len > sizeof(lang_pre))
 		{
-			lang_pre_len = sizeof(lang_pre_ptr);
+			lang_pre_len = sizeof(lang_pre);
 		}
 		emv_memcpy(lang_pre, lang_pre_ptr, lang_pre_len);
 	}
@@ -382,9 +382,9 @@ int outcome_seephone()
 
 	if(lang_pre_ptr && lang_pre_len > 0)
 	{
-		if(lang_pre_len > sizeof(lang_pre_ptr))
+		if(lang_pre_len > sizeof(lang_pre))
 		{
-			lang_pre_len = sizeof(lang_pre_ptr);
+			lang_pre_len = sizeof(lang_pre);
 		}
 		emv_memcpy(lang_pre, lang_pre_ptr, lang_pre_len);
 	}

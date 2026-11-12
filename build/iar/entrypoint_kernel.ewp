@@ -1926,6 +1926,9 @@
   </configuration>
   <file>
     <name>$PROJ_DIR$\..\..\src\emv.c</name>
+        </file>
+        <file>
+          <name>$PROJ_DIR$\..\..\src\emv_kernel.c</name>
   </file>
   <file>
     <name>$PROJ_DIR$\..\..\src\emv_application_selection.c</name>

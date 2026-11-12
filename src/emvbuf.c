@@ -27,12 +27,199 @@ typedef struct _bufhdr
     int32_t valuelen;
     struct _bufhdr *next;
 	uint8_t is_active;
+    /*
+     * Value bytes reserved for this node (rounded up to 4). It never shrinks:
+     * an in-place update with a shorter value only lowers valuelen, while the
+     * allocated record size must stay stable so that the data area keeps being
+     * a sequence of contiguous records (required by compaction).
+     */
+    int32_t alloclen;
 } bufheader;
 
 
 static bufheader**	g_hashtable = NULL;
 static uint8_t*			g_currpos = NULL;
 
+/*
+ * The data area starts right after the hash table header. Every allocation is
+ * a node record: bufheader followed by `alloclen` value bytes, so the whole
+ * [data_start, g_currpos) range is a sequence of consecutive node records
+ * (bump allocator; dead nodes are simply flagged but not yet removed).
+ */
+static uint8_t* appdata_data_start(void)
+{
+    size_t header_size = HASHTABLE_LEN * sizeof(bufheader*);
+    return (uint8_t*)g_emv_cnxt->tlvbuffer + header_size;
+}
+
+static size_t appdata_node_size(const bufheader *node)
+{
+    return sizeof(bufheader) + (size_t)node->alloclen;
+}
+
+/* a node record is usable only if its stored metadata is self consistent */
+static int32_t appdata_node_valid(const bufheader *node, const uint8_t *avail_end, const uint8_t *node_addr)
+{
+    if (node->valuelen < 0 || node->alloclen < 0 || node->alloclen < node->valuelen)
+    {
+        return 0;
+    }
+    if ((size_t)(avail_end - node_addr) < appdata_node_size(node))
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * Rebuild the hash table from the packed data area after compaction.
+ * Bucket order is not semantically significant, so nodes are re-linked with
+ * head insertion.
+ */
+static int32_t appdata_rebuild_hashtable(void)
+{
+    bufheader *node;
+    uint8_t *p;
+    uint8_t *data_start = appdata_data_start();
+    int32_t i;
+
+    for (i = 0; i < HASHTABLE_LEN; i++)
+    {
+        g_hashtable[i] = NULL;
+    }
+
+    p = data_start;
+    while (p < g_currpos)
+    {
+        node = (bufheader*)p;
+
+        if (!appdata_node_valid(node, g_currpos, p))
+        {
+            return -1;
+        }
+
+        node->is_active = 1;
+        node->next = g_hashtable[hash_func(node->tagname)];
+        g_hashtable[hash_func(node->tagname)] = node;
+
+        p += appdata_node_size(node);
+    }
+
+    return 0;
+}
+
+/*
+ * Make room for `required` more bytes in the data area.
+ *
+ * P1 fix: the old implementation returned from the "enough room" branch and
+ * then fell through to `return 0`, so the compaction body below it was dead
+ * code and the bump allocator never reclaimed anything: once the ~10KB data
+ * area filled up, every appdata_save() failed for the rest of the session.
+ *
+ * The compactor packs all still-active nodes towards the start of the data
+ * area, preserving address order (so a memmove never overwrites a node that has
+ * not been processed yet and g_currpos only moves backwards), then rebuilds the
+ * hash table from the packed records.
+ *
+ * WARNING for callers: compaction MOVES nodes, therefore every pointer
+ * previously returned by appdata_find()/GetTLV() into the data area becomes
+ * invalid. Do not hold such a pointer across an appdata_save() call.
+ */
+static int32_t try_compact_memory(size_t required)
+{
+    uint8_t *buffer_end;
+    uint8_t *data_start;
+    uint8_t *read_pos;
+    uint8_t *write_pos;
+    bufheader *node;
+    size_t node_size;
+
+    if (!g_emv_cnxt || !g_emv_cnxt->tlvbuffer || !g_hashtable || !g_currpos)
+    {
+        return 0;
+    }
+
+    buffer_end = g_emv_cnxt->tlvbuffer + g_emv_cnxt->tlvbuffer_size;
+
+    // 首先检查是否有足够空间（不需要整理）
+    if ((size_t)(buffer_end - g_currpos) >= required)
+    {
+        return 1;
+    }
+
+    /* in-place compaction: drop inactive nodes, keep active ones in address order */
+    data_start = appdata_data_start();
+    read_pos = data_start;
+    write_pos = data_start;
+
+    while (read_pos < g_currpos)
+    {
+        node = (bufheader*)read_pos;
+
+        if (!appdata_node_valid(node, g_currpos, read_pos))
+        {
+            return 0;       /* corrupted data area: refuse to compact it */
+        }
+        node_size = appdata_node_size(node);
+
+        if (node->is_active)
+        {
+            if (write_pos != read_pos)
+            {
+                memmove(write_pos, read_pos, node_size);
+            }
+            write_pos += node_size;
+        }
+
+        read_pos += node_size;
+    }
+
+    g_currpos = write_pos;
+
+    if (appdata_rebuild_hashtable() != 0)
+    {
+        return 0;
+    }
+
+    return ((size_t)(buffer_end - g_currpos) >= required) ? 1 : 0;
+}
+
+/*
+ * Reset the application data area for the next transaction.
+ *
+ * P1 fix: the old code had no reset path at all. EMV_ProcessExit() only
+ * memset()ed the TLV buffer without resetting this module's static allocator
+ * cursor, so each transaction permanently leaked its data area and eventually
+ * every appdata_save() returned BUF_BUFOVER.
+ *
+ * The hash table is cleared, the used part of the data area is zeroed (so no
+ * card data survives between transactions) and g_currpos is moved back to the
+ * first free byte. No memory is allocated, freed or reallocated.
+ */
+int32_t appdata_reset(void)
+{
+    uint8_t *data_start;
+    uint8_t *buffer_end;
+
+    if (!g_emv_cnxt || !g_emv_cnxt->tlvbuffer || !g_hashtable)
+    {
+        return -1;
+    }
+
+    data_start = appdata_data_start();
+    buffer_end = g_emv_cnxt->tlvbuffer + g_emv_cnxt->tlvbuffer_size;
+
+    emv_memset(g_hashtable, 0, HASHTABLE_LEN * sizeof(bufheader*));
+
+    if (g_currpos != NULL && g_currpos > data_start && g_currpos <= buffer_end)
+    {
+        emv_memset(data_start, 0, (uint32_t)(g_currpos - data_start));
+    }
+
+    g_currpos = data_start;
+
+    return 0;
+}
 
 int32_t appdata_init(void)
 {
@@ -73,87 +260,21 @@ int32_t appdata_init(void)
     return 0;
 }
 
-static int32_t try_compact_memory(size_t required)
+int32_t is_valid_pointer(void *ptr)
 {
-    int32_t i;
-    uint8_t* new_pos;
-    uint8_t* buffer_end;
+    // 检查是否在TLV缓冲区范围内
+    uintptr_t start;
+    uintptr_t end;
+    uintptr_t p;
 
-    if (!g_emv_cnxt || !g_emv_cnxt->tlvbuffer || !g_hashtable)
+    if (!g_emv_cnxt || !g_emv_cnxt->tlvbuffer)
     {
         return 0;
     }
 
-    buffer_end = g_emv_cnxt->tlvbuffer + g_emv_cnxt->tlvbuffer_size;
-
-    // 首先检查是否有足够空间（不需要整理）
-    if ((uint8_t*)g_currpos + required <= buffer_end)
-    {
-        return 1;
-    }
-
-	return 0;
-
-    // 计算哈希表头大小
-    size_t header_size = HASHTABLE_LEN * sizeof(bufheader*);
-    new_pos = g_emv_cnxt->tlvbuffer + header_size;
-
-    // 第一遍：重建哈希表并移动活跃节点
-    for (i = 0; i < HASHTABLE_LEN; i++)
-    {
-        bufheader* current = g_hashtable[i];
-        bufheader** prev_next = &g_hashtable[i];  // 指向当前链表最后一个节点的next指针
-
-        while (current != NULL)
-        {
-            bufheader* next = current->next;
-
-            if (current->is_active)
-            {
-                size_t node_size = sizeof(bufheader) + ((current->valuelen + 3) & ~0x03);
-
-                // 检查空间
-                if (new_pos + node_size > buffer_end)
-                {
-                    return 0; // 内存不足
-                }
-
-                // 移动节点到新位置
-                if ((uint8_t*)current != new_pos)
-                {
-                    memmove(new_pos, current, node_size);
-                }
-
-                // 更新链表
-                *prev_next = (bufheader*)new_pos;
-                prev_next = &((bufheader*)new_pos)->next;
-
-                new_pos += node_size;
-            }
-            else
-            {
-                // 移除非活跃节点，不更新prev_next
-            }
-
-            current = next;
-        }
-
-        // 终止当前链表的最后一个节点
-        *prev_next = NULL;
-    }
-
-    g_currpos = new_pos;
-
-    // 最终检查
-    return ((uint8_t*)g_currpos + required <= buffer_end);
-}
-
-int32_t is_valid_pointer(void *ptr)
-{
-    // 检查是否在TLV缓冲区范围内
-    uintptr_t start = (uintptr_t)g_emv_cnxt->tlvbuffer;
-    uintptr_t end = start + g_emv_cnxt->tlvbuffer_size;
-    uintptr_t p = (uintptr_t)ptr;
+    start = (uintptr_t)g_emv_cnxt->tlvbuffer;
+    end = start + g_emv_cnxt->tlvbuffer_size;
+    p = (uintptr_t)ptr;
 
     // 检查是否在全局变量范围内（可选）
 
@@ -180,6 +301,14 @@ int32_t appdata_save(uint32_t tag, uint8_t *value, int32_t valuelen, int32_t ove
     if (value == NULL && valuelen != 0)
 	{
         return BUF_ERR;
+    }
+
+    /* P2 fix: a negative (or larger than the whole data area) length used to
+     * flow into the size arithmetic / emv_memcpy as a huge size_t. */
+    if (valuelen < 0 || valuelen > (g_emv_cnxt->tlvbuffer_size - (int32_t)sizeof(bufheader)))
+    {
+        htTRACE("hash-table-error: invalid valuelen [%d]", valuelen);
+        return BUF_BUFOVER;
     }
 
 	if(valuelen > max_len)
@@ -277,23 +406,35 @@ int32_t appdata_save(uint32_t tag, uint8_t *value, int32_t valuelen, int32_t ove
 
         if (valuelen <= existing->valuelen)
 		{
+            int32_t oldlen = existing->valuelen;
+
+            /* alloclen is intentionally left untouched: the record keeps its
+             * reserved size so the data area stays a contiguous record array. */
             existing->valuelen = valuelen;
 
             if (value && valuelen > 0)
 			{
                 emv_memcpy(dest, value, valuelen);
             }
-			else if (existing->valuelen > 0)
+			else if (oldlen > 0)
 			{
-                emv_memset(dest, 0x00, existing->valuelen);
+                emv_memset(dest, 0x00, oldlen);
+            }
+
+            /* clear the now unreachable tail of the old, longer value */
+            if (oldlen > valuelen && valuelen >= 0)
+            {
+                emv_memset(dest + valuelen, 0x00, oldlen - valuelen);
             }
             return 0;
         }
 
-        existing->is_active = 0;
+        /* P1 note: the dead node is only flagged AFTER the replacement node has
+         * been allocated successfully (see below); otherwise a failed save
+         * would silently remove the still valid old value from the lookup. */
     }
 
-	required = sizeof(bufheader) + ((valuelen + 3) & ~0x03);
+	required = sizeof(bufheader) + (((size_t)valuelen + 3U) & ~(size_t)0x03U);
 //	eTRACE("required = [%d]", required);
 
 	ret = try_compact_memory(required);
@@ -320,7 +461,7 @@ int32_t appdata_save(uint32_t tag, uint8_t *value, int32_t valuelen, int32_t ove
         return BUF_BUFOVER;
     }
 
-    if (!is_valid_pointer(new_pos) || !is_valid_pointer(new_end))
+    if (!is_valid_pointer(new_pos))
 	{
         htTRACE("hash-table-error: New allocation range invalid!");
         return BUF_BUFOVER;
@@ -332,12 +473,25 @@ int32_t appdata_save(uint32_t tag, uint8_t *value, int32_t valuelen, int32_t ove
 //	eTRACE("new_node = [%p]", new_node);
 	new_node->tagname = tag;
 	new_node->valuelen = valuelen;
-	new_node->next = NULL;
+	new_node->alloclen = (int32_t)(((size_t)valuelen + 3U) & ~(size_t)0x03U);
 	new_node->is_active = 1;
+
+    /*
+     * P1 fix: the node that replaces a shorter existing value must inherit the
+     * old node's successor. The old code set next = NULL and then relinked
+     * *pprev, which silently dropped every other tag stored later in the same
+     * hash bucket (those tags became unreachable for appdata_find()).
+     */
+	new_node->next = (existing != NULL) ? existing->next : NULL;
 
 	// 添加到链表
 	*pprev = new_node;
 //	eTRACE("*pprev = [%p]", *pprev);
+
+    if (existing != NULL)
+    {
+        existing->is_active = 0;    /* dead node: reclaimed by try_compact_memory() */
+    }
 
     if (valuelen > 0)
 	{
@@ -361,6 +515,28 @@ int32_t appdata_save(uint32_t tag, uint8_t *value, int32_t valuelen, int32_t ove
         // 这里可能需要回滚操作
     }
 	return 0;
+}
+
+/*
+ * Save a value for a fixed kernel-internal tag without the EMV tag library
+ * checks.
+ *
+ * P1 fix for the 71/72 issuer script path: EMV_ResultOnline() renames the
+ * online response templates to 0xDF8100/0xDF8200, tags that are intentionally
+ * absent from g_emv_tag_lib. appdata_save_tlv() therefore rejected them with
+ * TAG_NOT_IN_DATABASE (and the caller ignores the return value), so issuer
+ * scripts were silently lost before they could be retrieved.
+ *
+ * This entry point performs exactly the same length/capacity validation as
+ * appdata_save() but skips the update-condition (RA/K/...) and template
+ * checks, so the kernel can store its own fixed tags.
+ *
+ * Buffer ownership: the value is copied into the kernel TLV data area and the
+ * caller keeps ownership of `value`; `value` may be NULL only when valuelen==0.
+ */
+int32_t appdata_save_raw(uint32_t tag, const uint8_t *value, int32_t valuelen, int32_t override)
+{
+    return appdata_save(tag, (uint8_t*)value, valuelen, override);
 }
 
 int32_t appdata_save_tlv(EMV_TLVOBJ *tlv, int32_t override, uint32_t template)
@@ -421,7 +597,7 @@ int32_t appdata_save_or(uint32_t tag, int32_t index, uint8_t value)
 	int32_t len;
 	uint8_t *ptmp = appdata_find(tag, &len);
 
-	if(ptmp == NULL || len < 0 || index >= len)
+	if(ptmp == NULL || len < 0 || index < 0 || index >= len)
 	{
 		return EMV_FAIL;
 	}
@@ -436,7 +612,7 @@ int32_t appdata_save_and(uint32_t tag, int32_t index, uint8_t value)
 	int32_t len;
 	uint8_t *ptmp = appdata_find(tag, &len);
 
-	if(ptmp == NULL || len < 0 || index >= len)
+	if(ptmp == NULL || len < 0 || index < 0 || index >= len)
 	{
 		return EMV_FAIL;
 	}

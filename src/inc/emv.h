@@ -588,6 +588,9 @@ int32_t EMV_ResultIssuerReferral(int32_t eResult);
  * @return  ֵ��V����ָ�룬����NULL��ʾû���ҵ�
  */
 uint8_t* EMV_GetData(uint32_t nTag, int32_t* pLen);
+/* Decoupled access to the candidate selected by the application (read-only).
+ * Returns NULL when no candidate is selected / index invalid. */
+const EMV_CANDIDATE* EMV_GetSelectedCandidate(void);
 
 
 /**

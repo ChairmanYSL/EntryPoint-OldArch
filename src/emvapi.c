@@ -153,7 +153,16 @@ int32_t emv_get_version(uint8_t* ver)
     uint8_t* ptmp;
     int32_t ilen;
 
+    if (ver == NULL)
+    {
+        return EMV_FAIL;
+    }
+
     ptmp = EMV_GetData(TAG_KERNEL_VERSION, &ilen);
+    if (ptmp == NULL)
+    {
+        return EMV_FAIL;
+    }
 
     API_sprintf((char*)ver, "%s & %s", ptmp, EMVAPI_VERSION);
 
@@ -289,11 +298,38 @@ int32_t emv_set_cardtype(uint8_t type)
 
 int32_t emv_get_kernel_id(uint8_t * val, int32_t *len)
 {
-	*len = g_emv_cnxt->candidates[g_emv_cnxt->req_sel_candidates_result].kernel_id_len;
-	if(g_emv_cnxt->candidates[g_emv_cnxt->req_sel_candidates_result].kernel_id_len)
-	{
-		emv_memcpy(val, g_emv_cnxt->candidates[g_emv_cnxt->req_sel_candidates_result].kernel_id, g_emv_cnxt->candidates[g_emv_cnxt->req_sel_candidates_result].kernel_id_len);
-	}
+    const EMV_CANDIDATE* candidate;
+    int32_t index;
+
+    if (len != NULL)
+    {
+        *len = 0;
+    }
+    if (g_emv_cnxt == NULL || val == NULL)
+    {
+        return EMV_UNINITIALIZED;
+    }
+
+    index = g_emv_cnxt->req_sel_candidates_result;
+    if (index < 0 || index >= g_emv_cnxt->candidates_num)
+    {
+        return EMV_FAIL;
+    }
+
+    candidate = &g_emv_cnxt->candidates[index];
+    if (candidate->kernel_id_len > sizeof(candidate->kernel_id))
+    {
+        return EMV_FAIL;
+    }
+    if (candidate->kernel_id_len > 0)
+    {
+        emv_memcpy(val, candidate->kernel_id, candidate->kernel_id_len);
+    }
+    if (len != NULL)
+    {
+        *len = candidate->kernel_id_len;
+    }
+
     return EMV_OK;
 }
 

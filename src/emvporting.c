@@ -88,6 +88,9 @@ static apipara_context g_apipara_ctx;
 #define PARA_LENLEN     (4)
 #define PARA_MAXLEN     (PARA_SAVLEN-PARA_LENLEN)
 
+/* transwater 单条记录的最大长度（长度字段来自文件/应用，必须限幅） */
+#define TRANSWATER_MAXLEN   (1024)
+
 #define CAPKPARAM_SAVLEN     (512)
 #define CAPKPARAM_LENLEN     (4)
 #define CAPKPARAM_MAXLEN     (CAPKPARAM_SAVLEN-CAPKPARAM_LENLEN)
@@ -112,19 +115,19 @@ static char* EMV_FNAME(int32_t type)
     static char fname[64] = {0};
     uint8_t kernel_index = 0;
 
-//    switch (type)
-//    {
-//        case _PARAM:
-//            API_strcpy(fname, "emv.par");
-//            return fname;
-//        default:
-//            emvporting_get_kernel_index(&kernel_index);
-//            if (kernel_index > KERNEL_MAX_INX)
-//            {
-//                return NULL;
-//            }
-//            break;
-//    }
+    /* apipara 文件固定为 emv.par，不能走内核索引分支（否则递归初始化） */
+    if (type == _PARAM)
+    {
+        API_strcpy(fname, "emv.par");
+        return fname;
+    }
+
+    /* 文件名按当前内核索引区分，索引越界时回退到 0，禁止向 fopen 传 NULL */
+    emvporting_get_kernel_index(&kernel_index);
+    if (kernel_index >= KERNEL_MAX_INX)
+    {
+        kernel_index = 0;
+    }
 
     switch (type)
     {
@@ -250,7 +253,8 @@ void emvporting_get_kernel_index(uint8_t *val)
 
 void emvporting_set_kernel_index(uint8_t val)
 {
-	if(val > KERNEL_MAX_INX)
+	/* 合法内核索引为 0..KERNEL_MAX_INX-1；KERNEL_MAX_INX 是内核个数 */
+	if(val >= KERNEL_MAX_INX)
 		val = 0;
     g_apipara_ctx.kernel_index = val;
     emvporting_apipara_save();
@@ -290,22 +294,126 @@ static void init_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar)
     }
 }
 
-static void conv_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar, u8* in, int inlen)
+#define PARAM_LEN_LE(n)         if (valuelen > (n)) { return FALSE; } break
+#define PARAM_LEN_EQ(n)         if (valuelen != (n)) { return FALSE; } break
+
+/*
+ * Check that a parameter value fits the fixed-size destination field it is
+ * copied into.  Values from the host are untrusted: over-long values must be
+ * rejected instead of overwriting the destination structure.
+ */
+static bool param_len_ok(uint32_t tag, int32_t valuelen)
+{
+    if (valuelen < 0)
+    {
+        return FALSE;
+    }
+
+    switch (tag)
+    {
+    case TAG_ICS:                                   PARAM_LEN_EQ(7);
+    case TAG_STATUS_CHECK_SUPPORT_INDICATOR:        PARAM_LEN_EQ(1);
+    case TAG_9F01_ACQUIRER_IDENTIFIER:              PARAM_LEN_LE(6);
+    case TAG_9F1E_IFD_SERIAL_NUMBER:                PARAM_LEN_LE(8);
+    case TAG_9F15_MERCHANT_CATEGORY_CODE:           PARAM_LEN_LE(2);
+    case TAG_9F16_MERCHANT_IDENTIFIER:              PARAM_LEN_LE(15);
+    case TAG_9F4E_MERCHANT_NAME:                    PARAM_LEN_LE(128);
+    case TAG_9F1A_TERMINAL_COUNTRY_CODE:            PARAM_LEN_EQ(2);
+    case TAG_9F1C_TERMINAL_IDENTIFICATION:          PARAM_LEN_EQ(8);
+    case TAG_9F7C_MERCHANT_CUSTOM_DATA:             PARAM_LEN_LE(20);
+    case TAG_5F2A_TRANSACTION_CURRENCY_CODE:        PARAM_LEN_EQ(2);
+    case TAG_5F36_TRANSACTION_CURRENCY_EXPONENT:    PARAM_LEN_EQ(1);
+    case TAG_008B_POI_INFOMATION:                   PARAM_LEN_LE(128);
+    case TAG_9F05_APPLICATION_DISCRETIONARY_DATA:   PARAM_LEN_LE(128);
+    case TAG_9F06_AID_TERMINAL:                     if (valuelen < 1 || valuelen > 16) { return FALSE; } break;
+    case TAG_9F35_TERMINAL_TYPE:                    PARAM_LEN_EQ(1);
+    case TAG_DF01_ASI:                              PARAM_LEN_EQ(1);
+    case TAG_9F09_APPLICATION_VERSION_NUMBER_TERMINAL: PARAM_LEN_EQ(2);
+    case TAG_DF17_TARGET_PERCENTAGE:                PARAM_LEN_EQ(1);
+    case TAG_DF16_MAX_TARGET_PERCENTAGE:            PARAM_LEN_EQ(1);
+    case TAG_DF15_THRESHOLD_VALUE:                  PARAM_LEN_EQ(4);
+    case TAG_9F3C_TRANSACTION_REFERENCE_CURRENCY:   PARAM_LEN_EQ(2);
+    case TAG_9F3D_TRANSACTION_REFERENCE_CURRENCY_EXPONENT: PARAM_LEN_EQ(1);
+    case TAG_DF11_TAC_DEFAULT:                      PARAM_LEN_EQ(5);
+    case TAG_DF12_TAC_ONLINE:                       PARAM_LEN_EQ(5);
+    case TAG_DF13_TAC_DENIAL:                       PARAM_LEN_EQ(5);
+    case TAG_9F1D_TERMINAL_RISK_MANGEMENT_DATA:     PARAM_LEN_LE(8);
+    case TAG_DF18_ONLINE_PIN_SUPPORT_INDICATOR:     PARAM_LEN_EQ(1);
+    case TAG_DF20_CONTACTLESS_TRANSACTION_LIMIT:    PARAM_LEN_EQ(6);
+    case TAG_DF21_CVM_REQUIRED_LIMIT:               PARAM_LEN_EQ(6);
+    case TAG_DF19_CONTACTLESS_FLOOR_LIMIT:          PARAM_LEN_EQ(6);
+    case TAG_9F1B_TERMINAL_FLOOR_LIMIT:             if (valuelen != 4 && valuelen != 6) { return FALSE; } break;
+    case TAG_DF811E_MSD_CVMCAP_CVMREQ:              PARAM_LEN_EQ(1);
+    case TAG_DF8118_CVMCAP_CVMREQ:                  PARAM_LEN_EQ(1);
+    case TAG_DF8119_CVMCAP_NOCVM:                   PARAM_LEN_EQ(1);
+    case TAG_DF811B_KERNEL_CONFIG:                  PARAM_LEN_EQ(1);
+    case TAG_DF8124_READER_CTL_TRX_LIMIT_NOCDCVM:   PARAM_LEN_LE(6);
+    case TAG_DF8125_READER_CTL_TRX_LIMIT_CDCVM:     PARAM_LEN_LE(6);
+    case TAG_DF812C_MSD_CVMCAP_NOCVM:               PARAM_LEN_EQ(1);
+    case TAG_9F7E_MOBILE_SUPPORT_INDICATOR:         PARAM_LEN_EQ(1);
+    case TAG_DF811F_SECURITY_CAP:                   PARAM_LEN_EQ(1);
+    case TAG_9F33_TERMINAL_CAPABILITIES:            PARAM_LEN_EQ(3);
+    case TAG_9F40_ADDITIONAL_TERMINAL_CAPABILITIES: PARAM_LEN_EQ(5);
+    case TAG_9F2A_KERNEL_ID:                        if (valuelen < 1 || valuelen > 8) { return FALSE; } break;
+    default:
+        break;
+    }
+
+    return TRUE;
+}
+
+#undef PARAM_LEN_LE
+#undef PARAM_LEN_EQ
+
+/*
+ * Validate all parameter values of an already decoded TLV list.  Returns 0
+ * when every known field fits, otherwise records the offending tag and
+ * returns an error.
+ */
+static int32_t param_validate(EMV_TLVOBJ* tlvs)
+{
+    int32_t i;
+    int32_t ret = 0;
+
+    for (i = 1; i <= tlvs[0].childnum; ++i)
+    {
+        if (!param_len_ok(tlvs[i].tagname, tlvs[i].valuelen))
+        {
+            TRACE("emvport-error: param tag[%08X] len[%d] rejected",
+                  (unsigned int)tlvs[i].tagname, tlvs[i].valuelen);
+            ret = rERR(ILL_TERMPARAM);
+        }
+    }
+
+    return ret;
+}
+
+static int32_t conv_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar, u8* in, int inlen)
 {
     EMV_TLVOBJ tlvs[64];
     int i, tlvnum;
+    int32_t ret = 0;
 	unsigned char term_floor_lmt[4]={0};
 
     if (EMV_TLV_Decode(in, inlen, tlvs, sizeof(tlvs)/sizeof(tlvs[0]), STRING_TLVOBJ))
     {
         TRACE("emvport-error: input param is not valid TLV format");
         API_memset(tlvs, 0, sizeof(tlvs));
+        return rERR(ILL_TERMPARAM);
     }
 
     tlvnum = tlvs[0].childnum;
 
     for (i = 1; i <= tlvnum; ++i)
     {
+        if (!param_len_ok(tlvs[i].tagname, tlvs[i].valuelen))
+        {
+            TRACE("emvport-error: param tag[%08X] len[%d] rejected",
+                  (unsigned int)tlvs[i].tagname, tlvs[i].valuelen);
+            ret = rERR(ILL_TERMPARAM);
+            continue;
+        }
+
         if (tpar)
         {
             switch (tlvs[i].tagname)
@@ -373,7 +481,7 @@ static void conv_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar, u8* in, int inle
 			case TAG_9F7C_MERCHANT_CUSTOM_DATA:
 				if(tlvs[i].valuelen)
 				{
-					API_memcpy(tpar->merch_custom_data, tlvs[i].pvalue, sizeof(tpar->merch_custom_data));
+					API_memcpy(tpar->merch_custom_data, tlvs[i].pvalue, tlvs[i].valuelen);
 				}
                 break;
             case TAG_5F2A_TRANSACTION_CURRENCY_CODE:
@@ -553,18 +661,58 @@ static void conv_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar, u8* in, int inle
                 break;
 			//for authenticate only
             case TAG_9F1B_TERMINAL_FLOOR_LIMIT:
-				if(tlvs[i].valuelen)
+				if(tlvs[i].valuelen == 4)
 				{
 					apar->term_floor_limit_exist = 1;
-					if(tlvs[i].valuelen == 4)
+					API_memcpy(apar->term_floor_limit, tlvs[i].pvalue, 4);
+				}
+				else if(tlvs[i].valuelen == 6)
+				{
+					/* 6-byte BCD (n12) -> 4-byte binary, big endian */
+					uint64_t floor_dec = 0;
+					bool floor_ok = TRUE;
+					int32_t k;
+
+					for (k = 0; k < 6; k++)
 					{
-						API_memcpy(apar->term_floor_limit, tlvs[i].pvalue, 4);
+						uint8_t hi = (uint8_t)((tlvs[i].pvalue[k] >> 4) & 0x0F);
+						uint8_t lo = (uint8_t)(tlvs[i].pvalue[k] & 0x0F);
+
+						if (hi > 9 || lo > 9)
+						{
+							floor_ok = FALSE;
+							break;
+						}
+						floor_dec = floor_dec * 10 + hi;
+						if (floor_dec > 0xFFFFFFFFULL)
+						{
+							floor_ok = FALSE;
+							break;
+						}
+						floor_dec = floor_dec * 10 + lo;
+						if (floor_dec > 0xFFFFFFFFULL)
+						{
+							floor_ok = FALSE;
+							break;
+						}
 					}
-					else if(tlvs[i].valuelen == 6)
+
+					if (floor_ok)
 					{
-						emv_bcd2hex(tlvs[i].pvalue, tlvs[i].valuelen, term_floor_lmt);
+						emv_dec2hex((uint32_t)floor_dec, term_floor_lmt, sizeof(term_floor_lmt));
+						apar->term_floor_limit_exist = 1;
 						API_memcpy(apar->term_floor_limit, term_floor_lmt, sizeof(apar->term_floor_limit));
 					}
+					else
+					{
+						TRACE("emvport-error: 9F1B value invalid, rejected");
+						ret = rERR(ILL_TERMPARAM);
+					}
+				}
+				else
+				{
+					TRACE("emvport-error: 9F1B len[%d] rejected", tlvs[i].valuelen);
+					ret = rERR(ILL_TERMPARAM);
 				}
                 break;
 			case TAG_DF811E_MSD_CVMCAP_CVMREQ:
@@ -647,6 +795,8 @@ static void conv_param(EMV_TERMPARAM* tpar, EMV_AIDPARAM* apar, u8* in, int inle
             }
         }
     }
+
+    return ret;
 }
 
 #define T_E_R_M__P_A_R_A_M__C
@@ -671,10 +821,23 @@ int32_t emvporting_clr_termparam(void)
 int32_t emvporting_set_termparam(uint8_t* par, int32_t len)
 {
     int32_t fd;
+    EMV_TLVOBJ tlvs[64];
 
     if (par == NULL || len <= 0 || len > PARA_MAXLEN)
     {
         return rERR(ErFUNCPAR);
+    }
+
+    /* 落盘前先做结构 + 字段长度校验，坏参数不得进入 Flash */
+    if (EMV_TLV_Decode(par, len, tlvs, sizeof(tlvs)/sizeof(tlvs[0]), STRING_TLVOBJ))
+    {
+        TRACE("emvport-error: termparam is not valid TLV");
+        return rERR(ILL_TERMPARAM);
+    }
+    if (param_validate(tlvs))
+    {
+        TRACE("emvport-error: termparam field length invalid");
+        return rERR(ILL_TERMPARAM);
     }
 
     if ((fd = API_fopen(EMV_FNAME(_TERMPARAM), F_WRONLY|F_CREAT)) <= 0)
@@ -869,6 +1032,13 @@ int32_t emvporting_add_aidparam(uint8_t* par, int32_t len)
 		return rERR(ILL_AIDPARAM);
 	}
 
+	/* 落盘前校验所有已知字段长度（含 9C/9F2A，避免后续无长度保护解引用） */
+	if (param_validate(&tlvs[0]))
+	{
+		TRACE("emvport-error: aid param field length invalid");
+		return rERR(ILL_AIDPARAM);
+	}
+
 	pos = EMV_TLV_Find(0, TAG_9F06_AID_TERMINAL, &tlvs[0], SEARCH_ALL_DESC);
 	if(0 == pos)
 	{
@@ -1013,7 +1183,8 @@ int32_t emvporting_get_aidparam(EMV_AIDPARAM* apar, int32_t inx)
     uint8_t  buf[PARA_SAVLEN];
     int32_t len;
     uint8_t* ptr;
-    EMV_TERMPARAM* tpar = &(apar->term);
+    EMV_TERMPARAM  tpar_buf;   /* scratch: term-level tags found in the AID record are not persisted (raw TLV read-back is used by kernels) */
+    EMV_TERMPARAM* tpar = &tpar_buf;
 
     init_param(tpar, apar);
 
@@ -1189,7 +1360,15 @@ int32_t emvporting_get_termapps(EMV_TERMAPP* apps)
 
 //		TRACE_HEX("emvport-info: get aid param buf", par, parlen);
 
-        /* ��� */
+        /* 条目数达到约定上限后停止写入，避免越过 termapps 区域 */
+        if (apps_num >= EMV_CFG_MAX_APPS)
+        {
+            TRACE("emvport-error: termapps exceeds max[%d]", EMV_CFG_MAX_APPS);
+            ret = rERR(EMV_GETTERMAPPSERR);
+            break;
+        }
+
+        /* 清零 */
         API_memset(tmp, 0, sizeof(EMV_TERMAPP));
 
         if ((pos = EMV_TLV_Find(0, TAG_9F06_AID_TERMINAL, tlvs, SEARCH_ALL_DESC)))
@@ -1199,6 +1378,7 @@ int32_t emvporting_get_termapps(EMV_TERMAPP* apps)
                 tmp->aid_len = tlvs[pos].valuelen;
                 API_memcpy(tmp->aid, tlvs[pos].pvalue, tmp->aid_len);
                 tmp->enable = 1;
+            tmp->rsv = 1;   /* default: extended selection (9F29) supported; AID-level override TBD */
             }
 
             if ((pos = EMV_TLV_Find(0, TAG_DF01_ASI, tlvs, SEARCH_ALL_DESC)))
@@ -1282,14 +1462,22 @@ int32_t checkCAPKhash(EMV_CAPKPARAM* out)//xinyong 160304 ���ӹ�Կ��
     }
     else if (cert.algorithm == EMV_PUBKEY_ALG_RSA)
     {
+        if (cert.key.rsa.modulus_len == 0 ||
+                (int32_t)cert.key.rsa.modulus_len > (int32_t)sizeof(cert.key.rsa.modulus))
+        {
+            return -1;
+        }
         API_memcpy(mesg, cert.rid, 5);
         len = 5;
         *(mesg + len) = cert.index;
         len += 1;
         API_memcpy(mesg + len, cert.key.rsa.modulus, cert.key.rsa.modulus_len);
         len += cert.key.rsa.modulus_len;
-        if (cert.key.rsa.exponent[2] == 0x03)
+        if (cert.key.rsa.exponent[0] == 0x00 &&
+                cert.key.rsa.exponent[1] == 0x00 &&
+                cert.key.rsa.exponent[2] == 0x03)
         {
+            /* exponent 3 is encoded as a single byte */
             *(mesg + len) = cert.key.rsa.exponent[2];
             len += 1;
         }
@@ -1298,7 +1486,8 @@ int32_t checkCAPKhash(EMV_CAPKPARAM* out)//xinyong 160304 ���ӹ�Կ��
             API_memcpy(mesg + len, cert.key.rsa.exponent, 3);
             len += 3;
         }
-        hash(cert.hash_algorithm, mesg, len, digest);
+        /* EMV Book 2: RSA CAPK checksum is always SHA-1 over RID||Index||Modulus||Exponent */
+        hash(EMV_HASH_ALG_SHA1, mesg, len, digest);
         if (API_memcmp(digest, cert.checksum, 20))
         {
             return rERR(DA_CAPKCHKERR);
@@ -1334,12 +1523,20 @@ int32_t conv_capkparam(EMV_CAPKPARAM* out, uint8_t* in, int32_t inlen)
             return -2;
         }
     }
+    if (tlvs[pos].valuelen != 5)
+    {
+        return -21;
+    }
     API_memcpy(out->rid, tlvs[pos].pvalue, 5);
 
     /* INDEX */
     if (!(pos = EMV_TLV_Find(0, TAG_9F22_CAPK_INDEX, tlvs, SEARCH_ALL_DESC)))
     {
         return -3;
+    }
+    if (tlvs[pos].valuelen != 1)
+    {
+        return -31;
     }
     out->index = *(tlvs[pos].pvalue);
 
@@ -1351,6 +1548,10 @@ int32_t conv_capkparam(EMV_CAPKPARAM* out, uint8_t* in, int32_t inlen)
     }
     else
     {
+        if (tlvs[pos].valuelen != 1)
+        {
+            return -41;
+        }
         out->algorithm = *(tlvs[pos].pvalue);
     }
 
@@ -1362,7 +1563,11 @@ int32_t conv_capkparam(EMV_CAPKPARAM* out, uint8_t* in, int32_t inlen)
     }
     else
     {
-      out->hash_algorithm = *(tlvs[pos].pvalue);
+        if (tlvs[pos].valuelen != 1)
+        {
+            return -51;
+        }
+        out->hash_algorithm = *(tlvs[pos].pvalue);
     }
 
     /* MODULUS */
@@ -1430,16 +1635,18 @@ int32_t conv_capkparam(EMV_CAPKPARAM* out, uint8_t* in, int32_t inlen)
     }
     else
     {
-    if (tlvs[pos].valuelen != 20 && tlvs[pos].valuelen != 64) //FIXME ���ǹ����㷨
-    {
-        return -91;
-    }
-    API_memcpy(out->checksum, tlvs[pos].pvalue, tlvs[pos].valuelen);
+        /* 结构体 checksum 只有 20 字节；EMV RSA/SM2 CAPK 校验值为 SHA-1 20 字节 */
+        if (tlvs[pos].valuelen != 20)
+        {
+            return -91;
+        }
+        API_memcpy(out->checksum, tlvs[pos].pvalue, 20);
 
-    if(checkCAPKhash(out))//xinyong 160304 ���ӹ�Կ���²���У�鹦��
-    {
-        //return -92;
-    }
+        if (checkCAPKhash(out))
+        {
+            TRACE("CAPK checksum verify failed");
+            return rERR(DA_CAPKCHKERR);
+        }
     }
     return 0;
 }
@@ -1989,6 +2196,11 @@ int32_t emvporting_save_transwater(uint8_t* buf, int32_t len)
 {
     int32_t fd;
 
+    if (buf == NULL || len <= 0 || len > TRANSWATER_MAXLEN)
+    {
+        return rERR(ErFUNCPAR);
+    }
+
     if ((fd = API_fopen(EMV_FNAME(_TRANSWATER), F_RDWR|F_CREAT)) <= 0)
     {
         return rERR(ErFOPEN);
@@ -2025,14 +2237,37 @@ int32_t emvporting_get_transwater(int32_t inx, uint8_t* buf, int32_t *len)
     int32_t fd;
     int32_t length = 0;
     TRACE("size:%d inx:%d", API_fsize(EMV_FNAME(_TRANSWATER)), inx);
+
+    if (buf == NULL || len == NULL || inx < 0)
+    {
+        return rERR(ErFUNCPAR);
+    }
+
     if ((fd = API_fopen(EMV_FNAME(_TRANSWATER), F_RDONLY)) <= 0)
     {
         return rERR(ErFOPEN);
     }
 
-    API_fseek(fd, inx, F_SEEK_SET);
+    if (API_fseek(fd, inx, F_SEEK_SET) < 0)
+    {
+        API_fclose(fd);
+        return rERR(ErFSEEK);
+    }
 
     if (API_fread(fd, (uint8_t*)&length, 4) != 4)
+    {
+        API_fclose(fd);
+        return rERR(ErFREAD);
+    }
+
+    if (length <= 0 || length > TRANSWATER_MAXLEN)
+    {
+        API_fclose(fd);
+        return rERR(ILL_TERMPARAMLEN);
+    }
+
+    /* 防止文件被截断/半写时按垃圾长度读取 */
+    if (API_fsize(EMV_FNAME(_TRANSWATER)) < (inx + 4 + length))
     {
         API_fclose(fd);
         return rERR(ErFREAD);

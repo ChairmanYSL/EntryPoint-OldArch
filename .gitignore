@@ -2,6 +2,7 @@
 /build/iar/Debug/
 /build/iar/Release/
 /build_host/
+/build_*/
 /build_ndk/
 /out/
 *.o

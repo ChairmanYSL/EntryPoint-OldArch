@@ -1459,6 +1459,8 @@ int32_t EMV_ResultSelCandidates(int32_t eResult)
         return EMV_UNINITIALIZED;
     if (g_emv_cnxt->status != EMV_REQ_SEL_CANDIDATES && g_emv_cnxt->status != EMV_REQ_SEL_CANDIDATES_AGAIN)
         return rERR(EMV_SELCANDIDATENOTREQ);
+    if (eResult < 0 || eResult >= g_emv_cnxt->candidates_num)
+        return rERR(EMV_SELCANDIDATENOTREQ);
 
     g_emv_cnxt->req_sel_candidates_result = eResult;
 
@@ -1612,6 +1614,23 @@ int32_t EMV_ResultIssuerReferral(int32_t eResult)
     return EMV_OK;
 }
 
+const EMV_CANDIDATE* EMV_GetSelectedCandidate(void)
+{
+    int32_t index;
+
+    if (g_emv_cnxt == 0 || g_emv_cnxt->candidates == 0)
+    {
+        return 0;
+    }
+
+    index = g_emv_cnxt->req_sel_candidates_result;
+    if (index < 0 || index >= g_emv_cnxt->candidates_num)
+    {
+        return 0;
+    }
+
+    return &g_emv_cnxt->candidates[index];
+}
 uint8_t* EMV_GetData(uint32_t nTag, int32_t* pLen)
 {
     if (g_emv_cnxt == NULL || g_emv_cnxt->status == EMV_STA_IDLE)
@@ -1923,16 +1942,15 @@ int32_t EMV_TLV_PacketByDOL(uint8_t *pDOL, int32_t nDOLLen, uint8_t *pVal, int32
     ret = emvdol_packet_tlv(pDOL, nDOLLen, pVal, nValLen, pOut, nOutMaxLen);
     if (ret < 0)
     {
-        ret = EMV_FAIL;
+        return EMV_FAIL;
     }
 
     if (pOutLen)
     {
         *pOutLen = ret;
-        ret = EMV_OK;
     }
 
-    return ret;
+    return EMV_OK;
 }
 
 int32_t EMV_TLV_PacketByTAG(uint32_t* pTags, int32_t nTagNum, uint8_t* pOut, int32_t* pOutLen, int32_t nOutMaxLen)
@@ -1957,17 +1975,19 @@ int32_t EMV_TLV_PacketByTAG(uint32_t* pTags, int32_t nTagNum, uint8_t* pOut, int
             continue;
         }
 
-        taglen = tlv_set_tag(pTags[i], pOut+reallen);
-        if (taglen < 0)
+        /* reserve worst-case tag(4)+length(4) before writing anything */
+        if (reallen + 4 + 4 > nOutMaxLen)
             return EMV_FAIL;
-        if (reallen + taglen > nOutMaxLen)
+
+        taglen = tlv_set_tag(pTags[i], pOut+reallen);
+        if (taglen < 0 || reallen + taglen > nOutMaxLen)
             return EMV_FAIL;
         reallen += taglen;
 
-        lenlen = tlv_set_len(ilen, pOut+reallen);
-        if (lenlen < 0)
+        if (reallen + 4 > nOutMaxLen)
             return EMV_FAIL;
-        if (reallen + lenlen > nOutMaxLen)
+        lenlen = tlv_set_len(ilen, pOut+reallen);
+        if (lenlen < 0 || reallen + lenlen > nOutMaxLen)
             return EMV_FAIL;
         reallen += lenlen;
 

@@ -10,12 +10,13 @@
 # ============================================================================
 param(
     [ValidateSet('host', 'ndk')]
-    [string]$Target = 'host'
+    [string]$Target = 'host',
+    [string]$Tag = ''
 )
 
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
-$LibDir = Join-Path $Root "build_$Target\lib"
+$Suffix = if ([string]::IsNullOrEmpty($Tag)) { "" } else { "_" + $Tag }; $LibDir = Join-Path $Root ("build_" + $Target + $Suffix + "\lib")
 
 if ($Target -eq 'host') { $Nm = 'D:\Program Files\LLVM\bin\llvm-nm.exe' }
 else { $Nm = 'E:\Android\ndk\android-ndk-r23b\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe' }
@@ -36,6 +37,7 @@ $AllowedExact = @(
     'ics_option', 'CreateEMVDiscretionaryData'
 )
 
+$EPDefined = @()
 $violations = @()
 $reports = @()
 
@@ -51,20 +53,35 @@ foreach ($lib in Get-ChildItem $LibDir -File -Filter '*.a' | Sort-Object Name) {
         if ($parts.Count -lt 2) { continue }
         $type = $parts[0]
         $name = $parts[-1]
+        # skip compiler-internal symbols (e.g. @feat.00) and section symbols
+        if ($name -match '^[@.]') { continue }
         if ($type -eq 'U') { $undef += $name } else { $defined += $name }
     }
     $defined = $defined | Sort-Object -Unique
     $undef = $undef | Sort-Object -Unique
     $external = $undef | Where-Object { $defined -notcontains $_ }
 
+    if ($module -eq 'entrypoint') { $EPDefined = $defined }
     $reports += ("[{0}] defined={1} undefined={2} external={3}" -f $module, $defined.Count, $undef.Count, $external.Count)
 
-    foreach ($d in $defined) {
-        foreach ($p in $KernelPrefixes) {
-            if ($d -like "$p*") { $violations += "[$module] defines kernel symbol: $d"; break }
+    if ($module -eq 'entrypoint') {
+        # Entry Point core must not define any contactless-kernel symbol
+        foreach ($d in $defined) {
+            foreach ($p in $KernelPrefixes) {
+                if ($d -like "$p*") { $violations += "[$module] defines kernel symbol: $d"; break }
+            }
+            if ($d -match '^(eTRACE|eTRACE_HEX|TRACE|TRACE_HEX|apduTRACE|htTRACE|tmTRACE)') {
+                $violations += "[$module] defines trace macro symbol: $d"
+            }
         }
-        if ($d -match '^(eTRACE|eTRACE_HEX|TRACE|TRACE_HEX|apduTRACE|htTRACE|tmTRACE)') {
-            $violations += "[$module] defines trace macro symbol: $d"
+    }
+    else {
+        # Kernel libraries must not duplicate Entry Point exports and must use their own prefix
+        foreach ($d in $defined) {
+            if ($EPDefined -contains $d) { $violations += "[$module] duplicates entrypoint symbol: $d"; continue }
+            if ($d -match '^(EMV_|emv_|appdata_|candidate_|outcome_|emvtlv_|emvicc_|emvporting_)') {
+                $violations += "[$module] defines entrypoint-owned namespace symbol: $d"
+            }
         }
     }
 
@@ -75,6 +92,7 @@ foreach ($lib in Get-ChildItem $LibDir -File -Filter '*.a' | Sort-Object Name) {
         if ($bad) { $violations += "[$module] forbidden external symbol: $s"; continue }
 
         $allowed = $AllowedExact -contains $s
+        if (-not $allowed -and $module -ne 'entrypoint' -and ($EPDefined -contains $s)) { $allowed = $true }
         if (-not $allowed) { foreach ($p in $AllowedPrefixes) { if ($s -like "$p*") { $allowed = $true; break } } }
         if (-not $allowed) { $violations += "[$module] unexpected external symbol: $s" }
     }

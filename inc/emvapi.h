@@ -748,6 +748,10 @@ int32_t emv_write_file(char *filename, uint32_t filesize, uint8_t *buf, uint32_t
 #endif
 
 
+/* Raw parameter TLV read-back used by kernel libraries (decoupled access). */
+int32_t emvporting_get_termparam_tlv(uint8_t* par, int32_t *rlen);
+int32_t emvporting_get_aidparam_tlv(int32_t inx, uint8_t* par, int32_t *rlen);
+int32_t emvporting_get_capkparam_tlv(int32_t inx, uint8_t* par, int32_t *rlen);
 #endif /* EMVAPI_H_ */
 /*
 ************************************************************************************************************************

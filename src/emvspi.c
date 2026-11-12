@@ -958,18 +958,51 @@ int32_t recover(int32_t alg, EMV_PUBLICKEY* pk, uint8_t* input, uint8_t* output)
     int32_t outlen = 0;
     int32_t ret;
 
+    if (pk == NULL || input == NULL || output == NULL)
+    {
+        return -1;
+    }
+
     if (alg == EMV_PUBKEY_ALG_RSA)
     {
         RSA_PUBKEY pubkey;
+
+        if (pk->rsa.modulus_len == 0 ||
+                (int32_t)pk->rsa.modulus_len > (int32_t)sizeof(pubkey.modulus))
+        {
+            TRACE("modulus_len Err[%d]", (int)pk->rsa.modulus_len);
+            return -1;
+        }
+        /* 指数只允许 EMV 的 1 字节或 3 字节编码，且不能全 0 */
+        if ((pk->rsa.exponent[0] | pk->rsa.exponent[1] | pk->rsa.exponent[2]) == 0)
+        {
+            TRACE("exponent Err");
+            return -1;
+        }
+
         CLEAR(pubkey);
         pubkey.length = pk->rsa.modulus_len;
         API_memcpy(pubkey.modulus, pk->rsa.modulus, pk->rsa.modulus_len);
-        API_memcpy(pubkey.exponent+1, pk->rsa.exponent, 3); //FIXME
+        if (pk->rsa.exponent[0] == 0x00 && pk->rsa.exponent[1] == 0x00)
+        {
+            /* 1-byte exponent, stored at exponent[2] */
+            pubkey.exponent[3] = pk->rsa.exponent[2];
+        }
+        else
+        {
+            /* 3-byte exponent, left padded to 4 bytes */
+            API_memcpy(pubkey.exponent+1, pk->rsa.exponent, 3);
+        }
 //        TRACE_HEX("####PK####", (uint8_t*)&pubkey, sizeof(RSA_PUBKEY));
 //        TRACE_HEX("####IN####", input, pk->rsa.modulus_len);
-        API_Crypt(CRYPT_TYPE_RSA, (uint8_t*)&pubkey, sizeof(pubkey),
+        ret = API_Crypt(CRYPT_TYPE_RSA, (uint8_t*)&pubkey, sizeof(pubkey),
                 NULL, input, pk->rsa.modulus_len, output, &outlen, 0);
-        if (outlen != pk->rsa.modulus_len)
+        if (ret != CRYPT_OK)
+        {
+            TRACE("API_Crypt Err[%d]", ret);
+            return -1;
+        }
+        if (outlen != (int32_t)pk->rsa.modulus_len)
         {
 //            TRACE("outlen Err[%d != %d]", outlen, pk->rsa.modulus_len);
 //            TRACE_HEX("####OU####", output, pk->rsa.modulus_len);
@@ -1047,16 +1080,28 @@ int32_t get_random(uint8_t *buf, int32_t len)
 {
 	uint8_t buf1[256] = {0};
 	int32_t len1 = 0;
-	if(len % 4)
+	int32_t ret;
+
+	if (buf == NULL || len <= 0 || len > (int32_t)sizeof(buf1))
 	{
-		len1 = (len/4+1)*4;
+		TRACE("random len Err[%d]", (int)len);
+		return -1;
 	}
-	else
+
+	len1 = ((len + 3) / 4) * 4;
+	if (len1 > (int32_t)sizeof(buf1))
 	{
-		len1 = len;
+		len1 = (int32_t)sizeof(buf1);
 	}
-    API_Rng(buf1, len1);
-	memcpy(buf,buf1,len);
+
+	ret = API_Rng(buf1, len1);
+	if (ret != CRYPT_OK)
+	{
+		TRACE("API_Rng Err[%d]", ret);
+		return -1;
+	}
+
+	API_memcpy(buf, buf1, len);
     TRACE_HEX("random", buf, len);
     return 0;
 }

@@ -30,6 +30,9 @@
 #define LE_EXIST    1
 #define LE_NULL     0
 
+/* 61xx / 6Cxx 自动处理的最大往返次数，防止恶意卡无限往返 */
+#define EMV_ICC_RSP_LOOP_MAX    10
+
 
 /*
 ************************************************************************************************************************
@@ -44,6 +47,21 @@ typedef struct
 } capdu_t;
 
 bool stop_flag = false;
+
+
+/*
+ * short APDU case 3/4: Lc is one byte.  Reject out-of-range lengths instead
+ * of silently truncating them to uint8_t.
+ */
+static int32_t icc_check_lc(int32_t len)
+{
+    if (len < 0 || len > 0xFF)
+    {
+        eTRACE("emvicc-error: lc[%d] exceeds one byte", (int)len);
+        return rERR(EMV_VALUENULL_LENERR);
+    }
+    return 0;
+}
 
 
 /*
@@ -218,9 +236,19 @@ static int32_t icccommand(capdu_t* capdu, uint8_t* output, int32_t* outlen)
     int32_t slen = 0, rlen = 0, sw = 0x0000;
     uint8_t  send[EMV_CFG_ICC_SEND_MAXLEN];
     uint8_t  recv[EMV_CFG_ICC_RECV_MAXLEN];
-//	uint8_t  recv_copy[EMV_CFG_ICC_RECV_MAXLEN];
-//    uint8_t  send_copy[EMV_CFG_ICC_SEND_MAXLEN];
-	int32_t mask_len,i=0;
+    uint8_t  rsp[EMV_CFG_ICC_RECV_MAXLEN];
+    uint8_t  get_rsp[5];
+    uint8_t* cmd = send;
+    int32_t  cmd_len = 0;
+    int32_t  rsp_len = 0;
+    int32_t  loop;
+    bool     le_added = false;
+
+    /* 输出长度契约：任何返回路径上 *outlen 都必须有定义 */
+    if (outlen != NULL)
+    {
+        *outlen = 0;
+    }
 
     emv_memset(send, 0, sizeof(send));
     send[slen++] = capdu->cla;
@@ -240,6 +268,11 @@ static int32_t icccommand(capdu_t* capdu, uint8_t* output, int32_t* outlen)
     if (capdu->le)
     {
         send[slen++] = 0x00;
+    }
+
+    if (slen > (int32_t)sizeof(send))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
     }
 
 //	emv_memset(send_copy, 0, sizeof(send_copy));
@@ -292,7 +325,28 @@ static int32_t icccommand(capdu_t* capdu, uint8_t* output, int32_t* outlen)
 		return -106;
 	}
 
-    sw = EMVPORT_IccRW(g_emv_cnxt->card_type, send, slen, recv, &rlen);
+    cmd = send;
+    cmd_len = slen;
+    le_added = (capdu->le != 0);
+
+    for (loop = 0; loop < EMV_ICC_RSP_LOOP_MAX; loop++)
+    {
+        rlen = 0;
+        emv_memset(rsp, 0, sizeof(rsp));
+
+        sw = EMVPORT_IccRW(g_emv_cnxt->card_type, cmd, cmd_len, rsp, &rlen);
+
+        if (rlen < 0 || rlen > (int32_t)sizeof(rsp) ||
+                rsp_len + rlen > (int32_t)sizeof(recv))
+        {
+            eTRACE("emvicc-error: invalid response len[%d]", rlen);
+            return rERR(EMV_VALUENULL_LENERR);
+        }
+        if (rlen > 0)
+        {
+            emv_memcpy(recv + rsp_len, rsp, rlen);
+            rsp_len += rlen;
+        }
 
 //	emv_memset(recv_copy, 0, sizeof(recv_copy));
 //	emv_memcpy(recv_copy, recv, rlen);
@@ -339,23 +393,80 @@ static int32_t icccommand(capdu_t* capdu, uint8_t* output, int32_t* outlen)
 	{
 		return -106;
 	}
-	apduTRACE_HEX("<<<<Mask_R_APDU<<<<", recv, rlen);
+	apduTRACE_HEX("<<<<Mask_R_APDU<<<<", recv, rsp_len);
     apduTRACE("<<<<SW1SW2<<<<[%04X]", sw);
 
-    if (sw == 0x0000)
-    {
-        return sw;
+        if (sw == 0x0000)
+        {
+            return sw;
+        }
+
+        /* 61xx: 发 GET RESPONSE (00 C0 00 00 Le) 取回数据 */
+        if ((sw & 0xFF00) == 0x6100)
+        {
+            get_rsp[0] = 0x00;
+            get_rsp[1] = 0xC0;
+            get_rsp[2] = 0x00;
+            get_rsp[3] = 0x00;
+            get_rsp[4] = (uint8_t)(sw & 0xFF);
+            cmd     = get_rsp;
+            cmd_len = (int32_t)sizeof(get_rsp);
+            continue;
+        }
+
+        /* 6Cxx: 按卡返回的 Le 重发原命令 */
+        if ((sw & 0xFF00) == 0x6C00)
+        {
+            uint8_t le = (uint8_t)(sw & 0xFF);
+
+            if (cmd == get_rsp)
+            {
+                get_rsp[4] = le;
+            }
+            else
+            {
+                if (le_added)
+                {
+                    send[slen - 1] = le;
+                }
+                else if (slen < (int32_t)sizeof(send))
+                {
+                    send[slen++] = le;
+                    le_added = true;
+                }
+                else
+                {
+                    return rERR(EMV_VALUENULL_LENERR);
+                }
+                cmd     = send;
+                cmd_len = slen;
+            }
+            continue;
+        }
+
+        break;
     }
 
-    if (rlen > 0)
+    if (loop >= EMV_ICC_RSP_LOOP_MAX)
     {
-        if (output != NULL)
+        eTRACE("emvicc-error: 61xx/6Cxx retry limit reached");
+        return rERR(EMV_APDU_TIMEOUT);
+    }
+
+    if (rsp_len > 0 && output != NULL)
+    {
+        emv_memcpy(output, recv, rsp_len);
+    }
+
+    if (outlen != NULL)
+    {
+        *outlen = rsp_len;
+
+        /* 调用方期望响应数据，但卡只回了 SW：返回明确错误码 */
+        if (rsp_len == 0)
         {
-            emv_memcpy(output, recv, rlen);
-        }
-        if (outlen != NULL)
-        {
-            *outlen = rlen;
+            eTRACE("emvicc-error: empty response data, sw[%04X]", (unsigned int)sw);
+            return rERR(EMV_VALUENULL_LENERR);
         }
     }
 
@@ -390,6 +501,10 @@ int32_t emvicc_apdu(uint8_t* input, int32_t inlen, uint8_t* output, int32_t* out
 int32_t emvicc_external_authenticate(uint8_t *data, int32_t datalen)
 {
     capdu_t capdu;
+    if (icc_check_lc(datalen))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
+    }
     capdu.cla   = 0x00;
     capdu.ins   = 0x82;
     capdu.p1    = 0x00;
@@ -403,6 +518,10 @@ int32_t emvicc_external_authenticate(uint8_t *data, int32_t datalen)
 int32_t emvicc_generate_ac(uint8_t type, bool cda, uint8_t *cdolv, int32_t cdolvlen, uint8_t *out, int32_t *outlen)
 {
     capdu_t capdu;
+    if (icc_check_lc(cdolvlen))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
+    }
     capdu.cla   = 0x80;
     capdu.ins   = 0xAE;
     capdu.p1    = (uint8_t)(type | ((cda) ? (0x10) : (0x00)));
@@ -442,6 +561,10 @@ int32_t emvicc_get_data(uint32_t tag, uint8_t *out, int32_t *outlen)
 int32_t emvicc_get_processing_options(uint8_t *pdolv, int32_t pdolvlen, uint8_t *out, int32_t *outlen)
 {
     capdu_t capdu;
+    if (icc_check_lc(pdolvlen))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
+    }
     capdu.cla   = 0x80;
     capdu.ins   = 0xA8;
     capdu.p1    = 0x00;
@@ -455,6 +578,10 @@ int32_t emvicc_get_processing_options(uint8_t *pdolv, int32_t pdolvlen, uint8_t 
 int32_t emvicc_internal_authenticate(uint8_t *ddolv, int32_t ddolvlen, uint8_t *out, int32_t *outlen)
 {
     capdu_t capdu;
+    if (icc_check_lc(ddolvlen))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
+    }
     capdu.cla   = 0x00;
     capdu.ins   = 0x88;
     capdu.p1    = 0x00;
@@ -507,6 +634,10 @@ int32_t emvicc_verify(uint8_t type, uint8_t *pin, uint8_t pinlen)
 int32_t emvicc_spi(uint8_t *pdolv, int32_t pdolvlen, uint8_t *out, int32_t *outlen)
 {
     capdu_t capdu;
+    if (icc_check_lc(pdolvlen))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
+    }
     capdu.cla   = 0x80;
     capdu.ins   = 0x1A;
     capdu.p1    = 0x00;
@@ -520,6 +651,10 @@ int32_t emvicc_spi(uint8_t *pdolv, int32_t pdolvlen, uint8_t *out, int32_t *outl
 int32_t emvicc_relay_resistance_protocol(uint8_t *term_rr_entropy, int32_t len, uint8_t *out, int32_t *outlen)
 {
     capdu_t capdu;
+    if (icc_check_lc(len))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
+    }
     capdu.cla   = 0x80;
     capdu.ins   = 0xEA;
     capdu.p1    = 0x00;
@@ -533,6 +668,10 @@ int32_t emvicc_relay_resistance_protocol(uint8_t *term_rr_entropy, int32_t len, 
 int32_t emvicc_compute_crypyographic_checksum(uint8_t *udolv, int32_t udolvlen, uint8_t *out, int32_t *outlen)
 {
     capdu_t capdu;
+    if (icc_check_lc(udolvlen))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
+    }
     capdu.cla   = 0x80;
     capdu.ins   = 0x2A;
     capdu.p1    = 0x8E;
@@ -546,18 +685,23 @@ int32_t emvicc_compute_crypyographic_checksum(uint8_t *udolv, int32_t udolvlen, 
 int32_t emvicc_put_data(uint32_t tag, uint8_t *in, int32_t inlen)
 {
     capdu_t capdu;
-	uint8_t out[4]={0};
-	int32_t outlen;
+    /* PUT DATA 不使用响应数据，但仍按最大接收长度准备缓冲，防止卡返回数据越界 */
+    uint8_t out[EMV_CFG_ICC_RECV_MAXLEN]={0};
 
+    if (icc_check_lc(inlen))
+    {
+        return rERR(EMV_VALUENULL_LENERR);
+    }
 
     capdu.cla   = 0x80;
     capdu.ins   = 0xDA;
     capdu.p1    = (uint8_t)((tag >> 8) & 0xFF);
     capdu.p2    = (uint8_t)((tag     ) & 0xFF);
-    capdu.lc    = (inlen);
+    capdu.lc    = (uint8_t)inlen;
     capdu.pdata = in;
     capdu.le    = LE_NULL;
-    return icccommand(&capdu, out, &outlen);
+    /* outlen 传 NULL：PUT DATA 正常就是 9000 空响应，不应判为错误 */
+    return icccommand(&capdu, out, NULL);
 }
 
 /*

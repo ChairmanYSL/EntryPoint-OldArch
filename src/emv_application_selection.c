@@ -69,6 +69,16 @@
 
 static int app_cmp(unsigned char *caid, int caid_len, EMV_TERMAPP *termapp)
 {
+    /* Book B 4.2: ADF Name / AID 长度为 5..16 字节；终端 AID 长度非法时不得退化为过宽（含空）匹配 */
+    if (caid == NULL || termapp == NULL)
+    {
+        return -1;
+    }
+    if (termapp->aid_len < 5 || termapp->aid_len > 16)
+    {
+        return -1;
+    }
+
     eTRACE_HEX("caid", caid, caid_len);
     eTRACE_HEX("taid", termapp->aid, termapp->aid_len);
     eTRACE("asi = %d", termapp->asi);
@@ -117,6 +127,16 @@ static void candidate_clr(void)
 
 static void candidate_add(EMV_CANDIDATE* candidate)
 {
+    /* 候选数组按 EMV_CFG_MAX_CANDIDATES 分配（emv.c:EMV_Init），达到上限后拒绝写入，避免越界写 */
+    if (g_emv_cnxt == NULL || candidate == NULL || g_emv_cnxt->candidates == NULL)
+    {
+        return;
+    }
+    if (g_emv_cnxt->candidates_num < 0 || g_emv_cnxt->candidates_num >= EMV_CFG_MAX_CANDIDATES)
+    {
+        return;
+    }
+
     emv_memcpy(&g_emv_cnxt->candidates[g_emv_cnxt->candidates_num++], candidate, sizeof(EMV_CANDIDATE));
 }
 
@@ -225,7 +245,8 @@ int32_t deal_spi_resp(uint8_t *resp, int32_t resp_len)
 
 						if ((pos_extselect = emvtlv_get(i, TAG_9F29_EXTENED_SELECTION, tlvs, SEARCH_ONLY_SON)))
 						{
-							if(g_emv_cnxt->termapps[i].rsv)
+							/* j 才是 termapps 的下标（i 是 tlvs 下标） */
+							if(g_emv_cnxt->termapps[j].rsv && tlvs[pos_extselect].valuelen > 0)
 							{
 								if(candidate.aid_len + tlvs[pos_extselect].valuelen <= 16)
 								{
@@ -289,6 +310,12 @@ int32_t deal_spi_resp(uint8_t *resp, int32_t resp_len)
 								eTRACE("paypass-info: AID don't match because kernel id invalid");
 								continue;
 							}
+						}
+
+						if (g_emv_cnxt->candidates_num >= EMV_CFG_MAX_CANDIDATES)
+						{
+							eTRACE("paypass-error: candidate list is full");
+							return rERR(AS_ERR);
 						}
 
 						candidate.rsv[0] = i;
@@ -360,15 +387,55 @@ int32_t parse_spi_resp(uint8_t *resp, int32_t resp_len, int32_t sw)
 }
 
 
+/* 按 SDOL 各项请求长度预估展开后的数据长度（不访问 appdata），用于在调用 emvdol_packet 之前
+   做容量校验，避免卡下发的超长 SDOL 越界写入 pack。
+   >=0：展开长度；<0：SDOL 格式非法或展开长度超过发送缓冲上限。 */
+static int32_t sdol_expand_len(const uint8_t *dol, int32_t dollen)
+{
+	int32_t i = 0, total = 0;
+
+	if (dol == NULL || dollen <= 0)
+	{
+		return -1;
+	}
+
+	while (i < dollen)
+	{
+		if ((dol[i] & 0x1F) == 0x1F)                /* has_subsequent：复合 tag */
+		{
+			i++;
+			while (i < dollen && (dol[i] & 0x80))   /* another_byte_follow */
+			{
+				i++;
+			}
+		}
+
+		i++;                                        /* tag 的最后一个字节 */
+		if (i >= dollen)
+		{
+			return -1;                              /* 缺少长度字节 */
+		}
+
+		total += dol[i++];                          /* 该 DOL 项请求的数据长度 */
+		if (total > EMV_CFG_ICC_SEND_MAXLEN)
+		{
+			return -1;
+		}
+	}
+
+	return total;
+}
+
+
 int32_t sdol_process(uint8_t flag, uint8_t *term_category, uint8_t *poi_info_value, int32_t poi_info_value_len)
 {
 	uint8_t *sdol=NULL;
-	int32_t len,i=0,j;
+	int32_t len,i=0;
+	int32_t raw_len=0,hdr_len=0,data_len=0;
 	uint8_t temp[EMV_CFG_ICC_SEND_MAXLEN]={0};
 	uint8_t pack[EMV_CFG_ICC_SEND_MAXLEN]={0};
     uint8_t resp[EMV_CFG_ICC_RECV_MAXLEN]={0};
-	int32_t pack_len=0,ret,resp_len;
-	bool two_byte_len_flag=false;
+	int32_t pack_len=0,ret,resp_len=0;
 
 	eTRACE("paypass-info: input flag = %d", flag);
 
@@ -383,130 +450,76 @@ int32_t sdol_process(uint8_t flag, uint8_t *term_category, uint8_t *poi_info_val
 		i += 2;
 		pack_len = i;
 	}
-	else if(flag == 2) //S SPI 6
+	else if(flag == 2 || flag == 3) //S SPI 6 / S SPI 7
 	{
 		sdol = appdata_find(TAG_9F3F_SDOL, &len);
 		if(sdol && len > 0)
 		{
-			pack_len = emvdol_packet(sdol, len, pack, sizeof(pack));
-			if(pack_len < 0)
+			/* 防御：先按 SDOL 各项请求长度估算展开长度，超出发送缓冲即拒绝，不依赖 emvdol_packet 内部校验 */
+			raw_len = sdol_expand_len(sdol, len);
+			if(raw_len < 0 || raw_len > (int32_t)sizeof(pack))
+			{
+				eTRACE("paypass-error: sdol request length exceeds send buffer");
+				return EMV_ERR;
+			}
+
+			raw_len = emvdol_packet(sdol, len, pack, (int32_t)sizeof(pack));
+			if(raw_len < 0 || raw_len > (int32_t)sizeof(pack))
 			{
 				eTRACE("paypass-info: parse sdol error");
 				return EMV_ERR;
 			}
 
-			if(pack_len > 127)
-			{
-				two_byte_len_flag = true;
-				if(sizeof(pack) - pack_len >= 3)
-				{
-					temp[i++] = 0x83;
-					temp[i++] = 0x81;
-					temp[i++] = (uint8_t)pack_len;
-				}
-				else
-				{
-					eTRACE("paypass-info: sdol pack len greater than max apdu send len");
-					return EMV_ERR;
-				}
-			}
-			else
-			{
-				if(sizeof(pack) - pack_len >= 2)
-				{
-					temp[i++] = 0x83;
-					temp[i++] = (uint8_t)pack_len;
-				}
-				else
-				{
-					eTRACE("paypass-info: sdol pack len greater than max apdu send len");
-					return EMV_ERR;
-				}
-			}
+			/* flag 3 在 SDOL 请求值之后追加 POI Information：ID '0001' + L '02' + 终端类别 2 字节，共 5 字节 */
+			data_len = raw_len + ((flag == 3) ? 5 : 0);
 
-			emv_memcpy(temp+i, pack, pack_len);
-			i += pack_len;
-			emv_memcpy(pack, temp, i);
-			pack_len = i;
-		}
-	}
-	else if(flag == 3)	//S SPI 7
-	{
-		sdol = appdata_find(TAG_9F3F_SDOL, &len);
-		if(sdol && len > 0)
-		{
-			pack_len = emvdol_packet(sdol, len, pack, sizeof(pack));
-
-			if(pack_len < 0)
+			/* Book B Annex C：SPI 命令的 Lc 是单字节。'83' TLV 总长（tag + 长度字节 + 值）不得超过 255，
+			   超长必须返回错误：既不能截断长度字节，也不能依赖 ICC 层对 Lc 的截断 */
+			if(data_len > 0xFF)
 			{
-				eTRACE("paypass-info: parse sdol error");
+				eTRACE("paypass-error: sdol data length exceeds 255");
 				return EMV_ERR;
 			}
 
-			if(pack_len > 127)
+			/* 83 tag + BER 长度：<=0x7F 用 1 字节；128..255 用 0x81（单字节长度，不截断） */
+			if(data_len <= 0x7F)
 			{
-				two_byte_len_flag = true;
-				if(sizeof(pack) - pack_len >= 3)
-				{
-					temp[i++] = 0x83;
-					temp[i++] = 0x81;
-					temp[i++] = (uint8_t)pack_len;
-				}
-				else
-				{
-					eTRACE("paypass-info: sdol pack len greater than max apdu send len");
-					return EMV_ERR;
-				}
+				hdr_len = 2;
+				temp[0] = 0x83;
+				temp[1] = (uint8_t)data_len;
 			}
 			else
 			{
-				if(sizeof(pack) - pack_len >= 2)
-				{
-					temp[i++] = 0x83;
-					temp[i++] = (uint8_t)pack_len;
-				}
-				else
-				{
-					eTRACE("paypass-info: sdol pack len greater than max apdu send len");
-					return EMV_ERR;
-				}
+				hdr_len = 3;
+				temp[0] = 0x83;
+				temp[1] = 0x81;
+				temp[2] = (uint8_t)data_len;
 			}
 
-			emv_memcpy(temp+i, pack, pack_len);
-			i += pack_len;
-			emv_memcpy(pack, temp, i);
-			pack_len = i;
-
-			eTRACE_HEX("paypass-info: pack sdol", pack, i);
-
-			if((sizeof(pack) - pack_len) > (poi_info_value_len+3))
+			if(hdr_len + data_len > 0xFF)
 			{
-				i = pack_len;
-
-				emv_memcpy(pack+i, "\x00\x01\x02", 3);
-				i += 3;
-
-				emv_memcpy(pack+i, term_category, 2);
-				i += 2;
-
-				eTRACE_HEX("paypass-info: pack term_category", pack, i);
-
-				if(two_byte_len_flag)
-				{
-					pack[2] += 5;
-				}
-				else
-				{
-					pack[1] += 5;
-				}
-				pack_len = i;
-				eTRACE_HEX("paypass-info: pack complete", pack, pack_len);
+				eTRACE("paypass-error: sdol spi command exceeds single-byte Lc");
+				return EMV_ERR;
 			}
-			else
+
+			/* 防御：写入 temp/pack 前再比较一次缓冲容量（当前 Lc 上限下恒成立，保留以防上限放宽） */
+			if(hdr_len + data_len > (int32_t)sizeof(temp))
 			{
 				eTRACE("paypass-info: sdol pack len greater than max apdu send len");
 				return EMV_ERR;
 			}
+
+			emv_memcpy(temp+hdr_len, pack, raw_len);
+			if(flag == 3)
+			{
+				emv_memcpy(temp+hdr_len+raw_len, "\x00\x01\x02", 3);
+				emv_memcpy(temp+hdr_len+raw_len+3, term_category, 2);
+			}
+
+			i = hdr_len + data_len;
+			emv_memcpy(pack, temp, i);
+			pack_len = i;
+			eTRACE_HEX("paypass-info: pack complete", pack, pack_len);
 		}
 	}
 	else
@@ -530,6 +543,18 @@ int32_t sdol_process(uint8_t flag, uint8_t *term_category, uint8_t *poi_info_val
 
 		outcome_try_again();
 		return EMV_APDU_TIMEOUT;
+	}
+
+	/* 卡只返回 9000 而无响应数据时 emvicc_spi 不回写 resp_len：解析前必须校验，避免按未初始化/越界长度解码 */
+	if(resp_len < 0 || resp_len > (int32_t)sizeof(resp))
+	{
+		eTRACE("paypass-error: invalid SPI response length");
+		return EMV_ERR;
+	}
+	if(0x9000 == ret && resp_len <= 0)
+	{
+		eTRACE("paypass-error: SPI response contains no data");
+		return EMV_ERR;
 	}
 
 	ret = parse_spi_resp(resp, resp_len, ret);
@@ -665,7 +690,7 @@ int32_t deal_pse_resp(uint8_t *resp, int32_t resp_len)
     EMV_CANDIDATE candidate={0};
     EMV_TLVOBJ tlvs[40]={0};
 	bool mandatory_exist=false;
-	uint8_t sfi, recno;
+	uint8_t sfi, recno = 1;
 
 	if (emvtlv_decode(resp, resp_len, tlvs, sizeof(tlvs)/sizeof(tlvs[0]), SINGLE_TLVOBJ) < 0)
 	{
@@ -700,8 +725,15 @@ int32_t deal_pse_resp(uint8_t *resp, int32_t resp_len)
         return rERR(AS_FCI88VALILL);
 	}
 
-	while (1)
+	/* 从记录 1 开始逐条读取 AEF 记录：recno 必须初始化并自增，且以 6A83 或记录号上限退出，避免死循环 */
+	for (recno = 1; ; recno++)
 	{
+		if (0 == recno)
+		{
+			break;	/* uint8_t 记录号回绕（已读满 0xFF 条），退出 */
+		}
+
+		resp_len = 0;
 		sw = emvicc_read_record(sfi, recno, resp, &resp_len);
 		if(0x9000 == sw)
 		{
@@ -716,7 +748,8 @@ int32_t deal_pse_resp(uint8_t *resp, int32_t resp_len)
 				return rERR(AS_RECNO70);
 			}
 
-			for (i = pos_sfi + 1; i <= tlvs[pos_sfi].childnum + pos_sfi; i++)
+			/* 61 模板在 AEF Data Template(70) 之下，必须遍历 70 的子节点（不是 primitive 的 88） */
+			for (i = pos_aef_data_temp + 1; i <= tlvs[pos_aef_data_temp].childnum + pos_aef_data_temp; i++)
 			{
 				//S52.12.1
 				if (tlvs[i].tagname == TAG_0061_APPLICATION_TEMPLATE && tlvs[i].valuelen > 0)
@@ -749,7 +782,7 @@ int32_t deal_pse_resp(uint8_t *resp, int32_t resp_len)
 					{
 						for (j = 0; j < g_emv_cnxt->termapps_num; j++)
 						{
-							if (g_emv_cnxt->termapps[i].enable == 0)
+							if (g_emv_cnxt->termapps[j].enable == 0)
 							{
 								continue;
 							}
@@ -804,6 +837,12 @@ int32_t deal_pse_resp(uint8_t *resp, int32_t resp_len)
 
 								if (ics_option(AS_Support_CardHolder_Confirm) || !(candidate.priority & 0x80))
 								{
+									if (g_emv_cnxt->candidates_num >= EMV_CFG_MAX_CANDIDATES)
+									{
+										eTRACE("paypass-error: candidate list is full");
+										return rERR(AS_ERR);
+									}
+
 									candidate.rsv[0] = j;
 									candidate_add(&candidate);
 								}
@@ -838,7 +877,7 @@ int32_t deal_ppse_resp(uint8_t *resp, int32_t resp_len)
 {
     int32_t i, ret,j;
     int32_t pos_fci, pos_dfname, pos_fci_prop,pos_fci_issuer;
-	int32_t pos_aid,pos_label,pos_api,pos_kernelID;
+	int32_t pos_aid,pos_label,pos_api,pos_kernelID,pos_extselect;
     EMV_CANDIDATE candidate={0};
     EMV_TLVOBJ tlvs[40]={0};
 	bool mandatory_exist=false;
@@ -905,7 +944,7 @@ int32_t deal_ppse_resp(uint8_t *resp, int32_t resp_len)
 
 	eTRACE("paypass-info: goto S52.12");
 	//S52.12 Build candidate list
-	for (i = pos_fci_issuer + 1; i <= tlvs[pos_fci_issuer].childnum + pos_fci_issuer + 1; i++)
+	for (i = pos_fci_issuer + 1; i <= tlvs[pos_fci_issuer].childnum + pos_fci_issuer; i++)
 	{
 		//S52.12.1
 		if (tlvs[i].tagname == TAG_0061_APPLICATION_TEMPLATE && tlvs[i].valuelen > 0)
@@ -922,6 +961,24 @@ int32_t deal_ppse_resp(uint8_t *resp, int32_t resp_len)
 						emv_memset(&candidate, 0x00, sizeof(candidate));
 						emv_memcpy(candidate.aid, tlvs[pos_aid].pvalue, tlvs[pos_aid].valuelen);
 						candidate.aid_len = tlvs[pos_aid].valuelen;
+
+						/* Book B 3.3.3: Extended Selection —— 9F29 值追加在 ADF Name 之后作为 SELECT 数据，
+						   仅当该终端应用支持扩展选择（termapps[j].rsv）且总长不超过 16 字节 */
+						if ((pos_extselect = emvtlv_get(i, TAG_9F29_EXTENED_SELECTION, tlvs, SEARCH_ONLY_SON)))
+						{
+							if (g_emv_cnxt->termapps[j].rsv && tlvs[pos_extselect].valuelen > 0)
+							{
+								if (candidate.aid_len + tlvs[pos_extselect].valuelen <= 16)
+								{
+									emv_memcpy(candidate.aid + candidate.aid_len, tlvs[pos_extselect].pvalue, tlvs[pos_extselect].valuelen);
+									candidate.aid_len += tlvs[pos_extselect].valuelen;
+								}
+								else
+								{
+									eTRACE("paypass-error: extended selection makes ADF name longer than 16");
+								}
+							}
+						}
 
 						eTRACE_HEX("paypass-info: caid", tlvs[pos_aid].pvalue, tlvs[pos_aid].valuelen);
 
@@ -1012,6 +1069,12 @@ int32_t deal_ppse_resp(uint8_t *resp, int32_t resp_len)
 						eTRACE("paypass-info: candidate add");
 						eTRACE_HEX("paypass-info: AID", candidate.aid, candidate.aid_len);
 						eTRACE("paypass-info: len = %d", candidate.aid_len);
+
+						if (g_emv_cnxt->candidates_num >= EMV_CFG_MAX_CANDIDATES)
+						{
+							eTRACE("paypass-error: candidate list is full");
+							return rERR(AS_ERR);
+						}
 
 						candidate_add(&candidate);
 						continue;
@@ -1256,6 +1319,12 @@ static int32_t parse_select_resp(uint8_t *resp, int32_t resp_len, int32_t sw)
         {
             if (ics_option(AS_Support_CardHolder_Confirm) || !(candidate.priority & 0x80))
             {
+                if (g_emv_cnxt->candidates_num >= EMV_CFG_MAX_CANDIDATES)
+                {
+                    eTRACE("paypass-error: candidate list is full");
+                    return rERR(AS_ERR);
+                }
+
                 candidate.rsv[0] = 0;
                 candidate_add(&candidate);
             }
@@ -1269,8 +1338,8 @@ static int32_t parse_select_resp(uint8_t *resp, int32_t resp_len, int32_t sw)
 
 int32_t select_ddf(uint8_t *fn, int32_t fnlen, uint8_t icti)
 {
-	int32_t ret,rlen;
-    uint8_t resp[EMV_CFG_ICC_RECV_MAXLEN];
+	int32_t ret,rlen = 0;
+    uint8_t resp[EMV_CFG_ICC_RECV_MAXLEN] = {0};
 
 	tmTRACE("entrypoint-info: flag3");
 
@@ -1297,6 +1366,14 @@ int32_t select_ddf(uint8_t *fn, int32_t fnlen, uint8_t icti)
 			return outcome_try_again();
 		}
 
+		/* 卡只返回 9000 而无 FCI 时 emvicc_select 不回写 rlen：解析前必须校验，
+		   越界/为空一律按空 FCI 交给 parse_ppse_resp 走 S52.11（'1C'），绝不用未初始化长度解码 */
+		if(rlen < 0 || rlen > (int32_t)sizeof(resp))
+		{
+			eTRACE("paypass-error: invalid select response length");
+			rlen = 0;
+		}
+
 		ret = parse_ppse_resp(resp, rlen, ret);
 		eTRACE("paypass-info: parse_ppse_resp ret = %d", ret);
 	}
@@ -1312,6 +1389,13 @@ int32_t select_ddf(uint8_t *fn, int32_t fnlen, uint8_t icti)
 				{
 					return EMV_ENDAPPLICATION;
 				}
+			}
+
+			/* 同 PPSE 分支：无响应数据时 rlen 未回写，解析前校验 */
+			if(rlen < 0 || rlen > (int32_t)sizeof(resp))
+			{
+				eTRACE("paypass-error: invalid select response length");
+				rlen = 0;
 			}
 
 			ret = parse_pse_resp(resp, rlen, ret);
@@ -1496,33 +1580,30 @@ int32_t emv_build_candidate_list(void)
 		eTRACE_HEX("paypass-info: AID in candidate", g_emv_cnxt->candidates[i].aid, g_emv_cnxt->candidates[i].aid_len);
 	}
 
-	//dedumplicate,this function can be improved by use hash table to O(N),now it's O(N2)
-//	 for (i = 0; i < g_emv_cnxt->candidates_num; i++)
-//	 {
-//	 	j = i + 1;
-//	 	while (j < g_emv_cnxt->candidates_num)
-//	 	{
-//	 		//compare aid len first
-//	 		// if (g_emv_cnxt->candidates[i].aid_len == g_emv_cnxt->candidates[j].aid_len)
-//	 		// {
-//	 			//priority also need to be compared
-//	 			if ((g_emv_cnxt->candidates[i].aid_len == g_emv_cnxt->candidates[j].aid_len) && \
-//					!emv_memcmp(g_emv_cnxt->candidates[i].aid, g_emv_cnxt->candidates[j].aid, g_emv_cnxt->candidates[i].aid_len) && \
-//	 				!emv_memcmp(g_emv_cnxt->candidates[i].kernel_id, g_emv_cnxt->candidates[j].kernel_id, g_emv_cnxt->candidates[i].kernel_id_len))
-//	 			{
-//	 				// find the dumplicate object,delete index j
-//	 				for (k = j; k < g_emv_cnxt->candidates_num - 1; k++)
-//	 				{
-//	 					emv_memcpy(&g_emv_cnxt->candidates[k], &g_emv_cnxt->candidates[k + 1], sizeof(EMV_CANDIDATE));
-//	 				}
-//	 				g_emv_cnxt->candidates_num--;
-//	 				continue;
-//	 			}
-//	 		// }
-//
-//	 		j++;
-//	 	}
-//	 }
+	/* 去重：同一 ADF Name + 同一 Kernel ID 只保留首次出现的候选（保持 PPSE 中出现顺序），
+	   修复同一卡应用匹配多个终端 AID 时被重复加入候选的问题 */
+	for (i = 0; i < g_emv_cnxt->candidates_num; i++)
+	{
+		j = i + 1;
+		while (j < g_emv_cnxt->candidates_num)
+		{
+			if ((g_emv_cnxt->candidates[i].aid_len == g_emv_cnxt->candidates[j].aid_len) &&
+				(g_emv_cnxt->candidates[i].kernel_id_len == g_emv_cnxt->candidates[j].kernel_id_len) &&
+				!emv_memcmp(g_emv_cnxt->candidates[i].aid, g_emv_cnxt->candidates[j].aid, g_emv_cnxt->candidates[i].aid_len) &&
+				!emv_memcmp(g_emv_cnxt->candidates[i].kernel_id, g_emv_cnxt->candidates[j].kernel_id, g_emv_cnxt->candidates[i].kernel_id_len))
+			{
+				/* 找到重复项：删除下标 j（后续项前移，首次出现者保留） */
+				for (k = j; k < g_emv_cnxt->candidates_num - 1; k++)
+				{
+					emv_memcpy(&g_emv_cnxt->candidates[k], &g_emv_cnxt->candidates[k + 1], sizeof(EMV_CANDIDATE));
+				}
+				g_emv_cnxt->candidates_num--;
+				continue;
+			}
+
+			j++;
+		}
+	}
 
 	//insert sort
 	for (i = 1; i < g_emv_cnxt->candidates_num; i++)

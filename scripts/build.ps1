@@ -19,7 +19,8 @@ param(
     [ValidateSet('host', 'ndk')]
     [string]$Target = 'host',
     [switch]$WerrorAll,
-    [switch]$NoAudit
+    [switch]$NoAudit,
+    [string]$Tag = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -41,7 +42,7 @@ else {
     $TargetFlags = @('--target=armv7a-linux-androideabi16', '-march=armv7-a', '-mfpu=vfpv3-d16', '-mfloat-abi=softfp', '-fPIC')
 }
 
-$OutRoot = Join-Path $Root "build_$Target"
+$Suffix = if ([string]::IsNullOrEmpty($Tag)) { "" } else { "_" + $Tag }; $OutRoot = Join-Path $Root ("build_" + $Target + $Suffix)
 $LibDir = Join-Path $OutRoot 'lib'
 
 # ---- 公共编译选项 ----------------------------------------------------------
@@ -73,7 +74,7 @@ if (Test-Path (Join-Path $ExpresspayDir 'src')) {
     $Modules += @{
         Name     = 'expresspay'
         SrcDirs  = @((Join-Path $ExpresspayDir 'src'))
-        Includes = @((Join-Path $ExpresspayDir 'inc'), (Join-Path $ExpresspayDir 'include'))
+        Includes = @((Join-Path $ExpresspayDir 'inc'), (Join-Path $ExpresspayDir 'include'), (Join-Path $Root 'inc'), (Join-Path $Root 'include'), (Join-Path $Root 'src\inc'))
     }
 }
 
@@ -143,7 +144,7 @@ if ($Failures.Count -gt 0) {
 }
 Write-Host "BUILD OK ($($Results.Count) translation units)" -ForegroundColor Green
 if (-not $NoAudit) {
-    & (Join-Path $PSScriptRoot 'symbol_audit.ps1') -Target $Target
+    & (Join-Path $PSScriptRoot 'symbol_audit.ps1') -Target $Target -Tag $Tag
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 exit 0
