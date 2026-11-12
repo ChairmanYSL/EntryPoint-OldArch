@@ -84,6 +84,9 @@ int32_t express_set_data(uint32_t tag, const uint8_t *in, int32_t inlen);
 int32_t express_get_version(uint8_t *ver);       /* "ZT_AMEX_CORE_V4.2.3" */
 int32_t express_get_candidate_list(void *list);  /* 由 Entrypoint 候选列表服务填充，内核不实现 */
 
+/* Expresspay 私有 Outcome（方案 G5）：Entrypoint 组装最终 Outcome 时合并 0xA0/0xB0/0xC0/0xD0 等扩展值 */
+int32_t express_get_outcome(EXPRESS_OUTCOME *out);
+
 /* ---------------------------------------------------------------------------
  * 内核运行期常量
  * ------------------------------------------------------------------------- */

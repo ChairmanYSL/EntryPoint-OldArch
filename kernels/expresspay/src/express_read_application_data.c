@@ -144,7 +144,7 @@ static void express_create_un(void){
     unsigned short c,year;
 	int len=0;
 
-	if(EffectDate = appdata_find(0x5F25, &len))
+	if((EffectDate = appdata_find(0x5F25, &len)) != NULL)
 	{
 		UnpredictNum = appdata_find(TAG_9F37_UNPREDICATABLE_NUMBER, &len);
 		a = UnpredictNum[0];

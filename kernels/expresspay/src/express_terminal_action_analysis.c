@@ -36,6 +36,9 @@
 
 #include "express_priv.h"
 
+/* P1 修复用：TVR 缺省副本（避免空指针） */
+static u8 k_zero_tvr[5] = {0, 0, 0, 0, 0};
+
 
 /*
 ************************************************************************************************************************
@@ -287,11 +290,11 @@ unsigned char express_term_analy_trans_res()
 	u8 *TVR, *TermType;
 	u8 *tmp=NULL;
 	int len, i;
-	u8 IACDenialExist,IACOnlineExist,IACDefaultExist;
+	u8 term_type;
 
 	tmp = appdata_find(TAG_009C_TRANSACTION_TYPE, &len);
-	//if trans type is refound,goto online deal
-	if(0x20 == tmp[0])
+	/* P1 修复：tmp 可能为 NULL（美运原版直接 tmp[0]） */
+	if(tmp != NULL && 0x20 == tmp[0])
 	{
 		appdata_save_or(TAG_0095_TVR, 3, 0x80);	//set 'transaction exceeds floor limit' bit 1.
 		return AC_ARQC;
@@ -301,14 +304,22 @@ unsigned char express_term_analy_trans_res()
 	IACDenial = appdata_find(TAG_9F0E_ISSUER_ACTION_CODE_DENIAL, &len);
 	TACDenial = appdata_find(TAG_DF13_TAC_DENIAL, &len);
 	TVR = appdata_find(TAG_0095_TVR, &len);
+	/* P1 修复：TVR 未建立时用全 0 副本，绝不空指针解引用 */
+	if (TVR == NULL)
+	{
+		TVR = k_zero_tvr;
+	}
 
 	if(NULL == IACDenial)
 	{
-		for(i = 0; i < 5; i++)
+		if (TACDenial != NULL)
 		{
-			if(0 != (TVR[i] & TACDenial[i]))
+			for(i = 0; i < 5; i++)
 			{
-				return AC_AAC;
+				if(0 != (TVR[i] & TACDenial[i]))
+				{
+					return AC_AAC;
+				}
 			}
 		}
 	}
@@ -320,7 +331,7 @@ unsigned char express_term_analy_trans_res()
 			{
 				return AC_AAC;
 			}
-			if(0 != (TVR[i] & TACDenial[i]))
+			if(TACDenial != NULL && 0 != (TVR[i] & TACDenial[i]))
 			{
 				return AC_AAC;
 			}
@@ -328,35 +339,41 @@ unsigned char express_term_analy_trans_res()
 	}
 
 	TermType = appdata_find(TAG_9F35_TERMINAL_TYPE, &len);
-    if((0x23 != TermType) && (0x26 != TermType) && (0x36 != TermType) && (0x13 != TermType) && (0x16 != TermType)) //Terminal has Online capability
-    {
+	/* P1 修复：美运把"指针"与 0x23/0x26/... 做整数比较（恒不等）→ 永远走"可联机"分支。
+	 * 这里先解引用；9F35 缺失时按 0x22（attended / offline+online）处理。 */
+	term_type = (TermType != NULL) ? TermType[0] : 0x22;
+	if((0x23 != term_type) && (0x26 != term_type) && (0x36 != term_type) && (0x13 != term_type) && (0x16 != term_type)) //Terminal has Online capability
+	{
 		IACOnline = appdata_find(TAG_9F0F_ISSUER_ACTION_CODE_ONLINE, &len);
 		TACOnline = appdata_find(TAG_DF12_TAC_ONLINE, &len);
 		if(NULL == IACOnline)
 		{
-            for(i = 0; i < 5; i++)
-            {
-                if(0 != (TVR[i] & TACOnline[i]))
-                {
-                    return AC_ARQC;
-                }
-            }
-            return AC_TC;
+			if (TACOnline != NULL)
+			{
+				for(i = 0; i < 5; i++)
+				{
+					if(0 != (TVR[i] & TACOnline[i]))
+					{
+						return AC_ARQC;
+					}
+				}
+			}
+			return AC_TC;
 		}
 		else
 		{
-            for(i=0; i<5; i++)
-            {
-                if(0 != (TVR[i] & IACOnline[i]))
-                {
-                    return AC_ARQC;
-                }
-                if(0 != (TVR[i] & TACOnline[i]))
-                {
-                    return AC_ARQC;
-                }
-            }
-            return AC_TC;
+			for(i=0; i<5; i++)
+			{
+				if(0 != (TVR[i] & IACOnline[i]))
+				{
+					return AC_ARQC;
+				}
+				if(TACOnline != NULL && 0 != (TVR[i] & TACOnline[i]))
+				{
+					return AC_ARQC;
+				}
+			}
+			return AC_TC;
 		}
 	}
 
@@ -365,33 +382,34 @@ unsigned char express_term_analy_trans_res()
 
 	if(NULL == IACDefault)
 	{
-        for(i = 0; i < 5; i++)
-        {
-            if(0 != (TVR[i] & TACDefault[i]))
-            {
-                return AC_AAC;
-            }
-        }
-        return AC_TC;
+		if (TACDefault != NULL)
+		{
+			for(i = 0; i < 5; i++)
+			{
+				if(0 != (TVR[i] & TACDefault[i]))
+				{
+					return AC_AAC;
+				}
+			}
+		}
+		return AC_TC;
 	}
 	else
 	{
-        for(i = 0; i < 5; i++)
-        {
-            if(0 != (TVR[i] & IACDefault[i]))
+		for(i = 0; i < 5; i++)
+		{
+			if(0 != (TVR[i] & IACDefault[i]))
 			{
 				return AC_AAC;
 			}
-            if(0 != (TVR[i] & TACDefault[i]))
-            {
+			if(TACDefault != NULL && 0 != (TVR[i] & TACDefault[i]))
+			{
 				return AC_AAC;
 			}
-        }
-        return AC_TC;
+		}
+		return AC_TC;
 	}
-
 }
-
 int express_parse_gac_resp(u32 template, bool cda_flag)
 {
 	u8 *cid = NULL, *atc = NULL, *card_itr_cap = NULL, *ac = NULL;

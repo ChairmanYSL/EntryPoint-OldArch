@@ -103,6 +103,11 @@
 #ifndef TAG_1F02_STATUS_CHECK_SUPPORT
 #define TAG_1F02_STATUS_CHECK_SUPPORT       0x1F02  /* Status Check Support Indicator (emv_tag.h:566) */
 #endif
+/* 注意：Entrypoint 公共 emv_tag.h:930 用 0xDFC108 覆盖了 0x1F02（PayPass 参数文件惯例）。
+ * 美运 V4.2.3 与 Expresspay 规范使用 0x1F02；内核按美运语义解析/注入该指示器，故在此覆盖。
+ * 集成注意：若主机参数文件仍按 0xDFC108 下发 1F02 语义，需要同时下发 0x1F02（见 STATUS 文档"集成注意"）。 */
+#undef  TAG_STATUS_CHECK_SUPPORT_INDICATOR
+#define TAG_STATUS_CHECK_SUPPORT_INDICATOR  TAG_1F02_STATUS_CHECK_SUPPORT
 #ifndef TAG_1F04_ZERO_AMT_ALLOWED
 #define TAG_1F04_ZERO_AMT_ALLOWED           0x1F04  /* zero amount allowed（Entrypoint 公共 emv_type.h 里叫 zero_amt_allow_flag） */
 #endif

@@ -138,7 +138,7 @@ int express_pdol_process(u8 *apdu_send, int *send_len, u8 term_type)
 
 			check_flag = TRUE;
 
-			if (ptr = appdata_find(TAG_ClessReaderCapab, &temp_len))
+			if ((ptr = appdata_find(TAG_ClessReaderCapab, &temp_len)) != NULL)
 			{
 				eTRACE("AMEX-info: return Terminal Type -Modified instead of 9F35");
 				term_type |= ptr[0];

@@ -368,6 +368,20 @@ int express_app_sel_init(void)
     /* 美运 :1267：交易开始清 appdata（Entrypoint 在 IDLE 阶段写入的 9C/金额随后由本函数重建） */
     appdata_init();
 
+    /* ===== P0/P1 修复（移植新增）：补建 TSI/TVR =====
+     * 美运 emvbuf.c:42-43 在 appdata_init 内预建 TSI/TVR；Entrypoint 的 appdata_init 不再预建。
+     * 不补建则 TRM/TAA 的 appdata_find(TAG_0095_TVR) 可能返回 NULL → 空指针解引用。
+     * TSI 用 3 字节（EMV Book 3；美运误用 2 字节，一并修正）。 */
+    {
+        uint8_t zero_tvr[5] = {0};
+        uint8_t zero_tsi[3] = {0};
+
+        (void)appdata_save(TAG_0095_TVR, zero_tvr, (int32_t)sizeof(zero_tvr), UNIQUE);
+        (void)appdata_save(TAG_009B_TSI, zero_tsi, (int32_t)sizeof(zero_tsi), UNIQUE);
+        emv_memset(g_express_cnxt->tvr, 0, sizeof(g_express_cnxt->tvr));
+        emv_memset(g_express_cnxt->tsi, 0, sizeof(g_express_cnxt->tsi));
+    }
+
     ret = express_select_final(cand);
     if (ret != EMV_OK)
     {

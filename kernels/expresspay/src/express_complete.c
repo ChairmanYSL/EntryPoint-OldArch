@@ -135,7 +135,7 @@ int express_pre_complete()
 	cid = appdata_find(TAG_9F27_CRYPTOGRAM_INFO_DATA, NULL);
 	if(Resp_AAC(*cid))
 	{
-		if(enhan_ctl_reader_cap[0] & 0x80)	//if Terminal has contact interface
+		if((enhan_ctl_reader_cap != NULL) && (enhan_ctl_reader_cap[0] & 0x80))	//if Terminal has contact interface
 		{
 			if( ((g_express_cnxt->aip[1] & 0x40) == 0x00) && \
 				((g_express_cnxt->aip[1] & 0x20) == 0x00) && \
