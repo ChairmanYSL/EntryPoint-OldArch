@@ -88,3 +88,19 @@ void EMV_SetSelectedKernel(const EMV_KERNEL_OPS* ops)
 {
     g_current_kernel = ops;
 }
+
+void EMV_KernelPostResult(int32_t kind, int32_t result, const uint8_t *data, int32_t len)
+{
+    if (g_current_kernel != 0 && g_current_kernel->post_result != 0)
+    {
+        g_current_kernel->post_result(kind, result, data, len);
+    }
+}
+
+void EMV_KernelExit(void)
+{
+    if (g_current_kernel != 0 && g_current_kernel->exit != 0)
+    {
+        g_current_kernel->exit();
+    }
+}

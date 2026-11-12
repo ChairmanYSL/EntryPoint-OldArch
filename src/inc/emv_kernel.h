@@ -49,7 +49,21 @@ typedef struct
     int32_t (*init)(void);                       /* kernel init (reset context) */
     int32_t (*preprocess)(bool force_online);    /* Entry Point pre-processing hand-off */
     int32_t (*process)(void);                    /* kernel state machine step */
+    void    (*exit)(void);                       /* optional: transaction end cleanup */
+    void    (*post_result)(int32_t kind, int32_t result,
+                           const uint8_t *data, int32_t len); /* optional: result callback */
 } EMV_KERNEL_OPS;
+
+/* post_result kinds (one per Entry Point EMV_Result* API) */
+#define EP_RESULT_KIND_SEL_CANDIDATES     1
+#define EP_RESULT_KIND_SEL_ACCOUNT_TYPE   2
+#define EP_RESULT_KIND_CHECK_ID           3
+#define EP_RESULT_KIND_ONLINE_PIN         4
+#define EP_RESULT_KIND_OFFLINE_PIN        5
+#define EP_RESULT_KIND_BYPASS_PIN         6
+#define EP_RESULT_KIND_FORCE_ONLINE       7
+#define EP_RESULT_KIND_ONLINE             8
+#define EP_RESULT_KIND_ISSUER_REFERRAL    9
 
 /**
  * @brief  Register a kernel. Idempotent for the same kernel_id (replaces entry).
@@ -77,6 +91,17 @@ int32_t EMV_KernelProcess(void);
  * @brief  Kernel selected by the last successful combination selection.
  */
 uint8_t EMV_GetSelectedKernel(void);
+
+/**
+ * @brief  Forward an application result to the currently selected kernel (optional hook).
+ *         Kernels that do not implement post_result are simply not notified.
+ */
+void EMV_KernelPostResult(int32_t kind, int32_t result, const uint8_t *data, int32_t len);
+
+/**
+ * @brief  Notify the current kernel that the transaction is finished (optional hook).
+ */
+void EMV_KernelExit(void);
 
 /* Internal: called by emv_select_kernel() after a successful selection. */
 void EMV_SetSelectedKernel(const EMV_KERNEL_OPS* ops);

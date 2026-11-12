@@ -1468,6 +1468,8 @@ int32_t EMV_ResultSelCandidates(int32_t eResult)
 
     g_emv_cnxt->req_sel_candidates_result = eResult;
 
+        EMV_KernelPostResult(1, eResult, NULL, 0);
+
     return EMV_OK;
 }
 
@@ -1480,6 +1482,8 @@ int32_t EMV_ResultSelAccountType(int32_t eResult)
 
     g_emv_cnxt->req_sel_accounttype_result = eResult;
 
+        EMV_KernelPostResult(2, eResult, NULL, 0);
+
     return EMV_OK;
 }
 
@@ -1491,6 +1495,8 @@ int32_t EMV_ResultCheckID(int32_t eResult)
         return rERR(EMV_CHECKIDNOTREQ);
 
     g_emv_cnxt->req_check_id_result = eResult;
+
+        EMV_KernelPostResult(3, eResult, NULL, 0);
 
     return EMV_OK;
 }
@@ -1512,6 +1518,8 @@ int32_t EMV_ResultOnlinePIN(int32_t eResult, uint8_t* pData, int32_t nDataLen)
             appdata_save(TAG_ONLINE_PIN, pData, nDataLen, UNIQUE);
         }
     }
+
+        EMV_KernelPostResult(4, eResult, pData, nDataLen);
 
     return EMV_OK;
 }
@@ -1540,6 +1548,8 @@ int32_t EMV_ResultOfflinePIN(int32_t eResult, uint8_t* pData, int32_t nDataLen)
         }
     }
 
+        EMV_KernelPostResult(5, eResult, pData, nDataLen);
+
     return EMV_OK;
 }
 
@@ -1554,6 +1564,8 @@ int32_t EMV_ResultBypassPIN(int32_t eResult)
 
     g_emv_cnxt->req_confirm_bypass_pin_result = eResult;
 
+        EMV_KernelPostResult(6, eResult, NULL, 0);
+
     return EMV_OK;
 }
 
@@ -1565,6 +1577,8 @@ int32_t EMV_ResultForceOnline(int32_t eResult)
         return rERR(EMV_FORCEONLINENOTREQ);
     eTRACE("result[%d]", eResult);
     g_emv_cnxt->req_confirm_force_online_result = eResult;
+
+        EMV_KernelPostResult(7, eResult, NULL, 0);
 
     return EMV_OK;
 }
@@ -1603,6 +1617,8 @@ int32_t EMV_ResultOnline(int32_t eResult, uint8_t* pResp, int32_t nRespLen)
         }
     }
 
+        EMV_KernelPostResult(8, eResult, pResp, nRespLen);
+
     return EMV_OK;
 }
 
@@ -1614,6 +1630,8 @@ int32_t EMV_ResultIssuerReferral(int32_t eResult)
         return rERR(EMV_ISSREFERRALNOTREQ);
 
     g_emv_cnxt->req_issuer_referral_result = eResult;
+
+        EMV_KernelPostResult(9, eResult, NULL, 0);
 
     return EMV_OK;
 }
@@ -2010,10 +2028,11 @@ int32_t EMV_TLV_PacketByTAG(uint32_t* pTags, int32_t nTagNum, uint8_t* pOut, int
 
 int32_t EMV_ProcessExit(void)
 {
+    EMV_KernelExit();
     (void)appdata_reset();
+
     if (g_emv_cnxt == NULL)
     {
-    (void)appdata_reset();
         return EMV_UNINITIALIZED;
     }
 
