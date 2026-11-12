@@ -1,0 +1,21 @@
+# ---- build outputs ----
+/build/iar/Debug/
+/build/iar/Release/
+/build_host/
+/build_ndk/
+/out/
+*.o
+*.a
+*.so
+*.pbi
+*.pbi.cout
+*.pbd
+*.dep
+
+# ---- IDE caches ----
+SI/
+_*.utf8/
+.vscode/
+
+# ---- nested repositories / third-party ----
+/emv_core_amex_japan/
