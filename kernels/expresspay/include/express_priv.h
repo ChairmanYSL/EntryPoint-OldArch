@@ -24,6 +24,9 @@
 /* ---------------------------------------------------------------------------
  * 1) Entrypoint 公共服务（必须最先包含：ks_type.h 提供 u8/u16/u32/s32 与 TRUE/FALSE）
  * ------------------------------------------------------------------------- */
+/* 平台 SDK 基础类型（Entrypoint 的 inc/sdk.h 同样先包含 ks_type.h；u32 = unsigned long，
+ * 在 Windows x64 / ARM32 上均为 32 位，与美运内核假设一致） */
+#include "ks_type.h"
 #include "emvi.h"                       /* emv.h/emv_type.h/emv_tag.h/emv_ics.h/emv_utils.h/emvoutcome.h */
 
 /* u8/u16/u32/s32 已由 ks_type.h 提供，禁止重复 typedef（C99 不允许同名 typedef 重定义） */
@@ -32,6 +35,7 @@
 #include "express_tags.h"               /* 美运私有标签 + TDOL 0x1F03 覆盖 */
 #include "express_param.h"              /* EXPRESS_TERM_PARAM / EXPRESS_AID_PARAM / EXPRESS_DRL */
 #include "express_types.h"              /* EXPRESS_CONTEXT / 阶段原型 / 常量 */
+#include "express_api.h"                /* EXPRESS_KERNEL_ID / EXPRESS_KERNEL_ID_LEN / EXPRESS_RESULT_* */
 #include "emv_kernel.h"                 /* Entrypoint 内核注册表（EMV_RegisterKernel/EMV_KERNEL_OPS） */
 
 /* ---------------------------------------------------------------------------
@@ -61,6 +65,26 @@ typedef EXPRESS_DRL_PARAMS SDK_EXPRESS_DRL_PARAMS; /* emvi.h:120-124 */
 #endif
 #ifndef MSD_MODE
 #define MSD_MODE                    0                       /* 美运 emvi.h:94 MSD 模式 */
+#endif
+
+/* ---------------------------------------------------------------------------
+ * 3b) 美运错误码（Entrypoint emv_type.h 的同一错误基值下未定义的项）
+ *     IA_ERR=-1200 / RD_ERR=-1300 / DA_ERR=-1400（数值来自美运 emv_type.h:123/125/138/202）
+ * ------------------------------------------------------------------------- */
+#ifndef IA_OTHERCARD
+#define IA_OTHERCARD                (IA_ERR - 27)
+#endif
+#ifndef IA_RECORDNUMINVALID
+#define IA_RECORDNUMINVALID         (IA_ERR - 29)
+#endif
+#ifndef RD_MSD_ATC_LENERR
+#define RD_MSD_ATC_LENERR           (RD_ERR - 11)
+#endif
+#ifndef DA_IPKCERTNOPAN
+#define DA_IPKCERTNOPAN             (DA_ERR - 62)
+#endif
+#ifndef CV_FAIL_ALWALS
+#define CV_FAIL_ALWALS              9                       /* 美运 emvi.h:624 EMV_CV_Results */
 #endif
 
 /* 交易类型（美运 emvi.h:71-79；与 Entrypoint EMV_TransTypes 数值一致） */

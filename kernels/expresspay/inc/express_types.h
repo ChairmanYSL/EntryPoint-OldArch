@@ -105,7 +105,7 @@ typedef struct
     uint8_t                     trans_type;       /* emv.c:846 */
     uint32_t                    trans_amount;     /* emv.c:879 */
     uint32_t                    trans_amount_other;/* emv.c:891 */
-    bool                        unable_online;    /* emv.c:997-1002 bis_unable_online：终端不支持联机；
+    bool                        bis_unable_online;/* emv.c:997-1002：终端不支持联机（原 unable_online，按美运字段名 1:1 移植）；
                                                      消费者 emv_initiate_application.c:86,93；
                                                      emv_terminal_action_analysis.c:187；emv_complete.c:140 */
     uint8_t                     force_online;     /* emv.c:924 qpboc_force_online（0/1，来自 EMV_PreProcess(bOnline)） */
