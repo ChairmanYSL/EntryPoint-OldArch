@@ -23,7 +23,19 @@ Write-Host "== 2/3 ndk gate ==" -ForegroundColor Cyan
 $ndkOk = ($LASTEXITCODE -eq 0)
 $results += "ndk gate           : $(if ($ndkOk) { 'PASS' } else { 'FAIL' })"
 
-Write-Host "== 3/3 struct sizes (32-bit ABI) ==" -ForegroundColor Cyan
+Write-Host "== 3/4 host E2E tests ==" -ForegroundColor Cyan
+$testScript = Join-Path $PSScriptRoot 'test_host.ps1'
+if (Test-Path $testScript) {
+    & $testScript -Tag $Tag
+    $testOk = ($LASTEXITCODE -eq 0)
+    $results += "host E2E tests     : $(if ($testOk) { 'PASS' } else { 'FAIL' })"
+} else {
+    $testOk = $true
+    $results += "host E2E tests     : SKIP (scripts/test_host.ps1 not found)"
+}
+
+Write-Host "== 4/4 struct sizes (32-bit ABI) ==" -ForegroundColor Cyan
+
 $tmp = Join-Path $env:TEMP ("ep_verify_" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 @'
@@ -63,6 +75,6 @@ foreach ($t in @('host', 'ndk')) {
 Write-Host ""
 Write-Host "== verify summary ==" -ForegroundColor Cyan
 $results | ForEach-Object { Write-Host "  $_" }
-if ($hostOk -and $ndkOk) { Write-Host "VERIFY OK" -ForegroundColor Green; exit 0 }
+if ($hostOk -and $ndkOk -and $testOk) { Write-Host "VERIFY OK" -ForegroundColor Green; exit 0 }
 Write-Host "VERIFY FAILED" -ForegroundColor Red
 exit 1
