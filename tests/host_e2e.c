@@ -156,12 +156,22 @@ static int build_ppse(uint8_t* out, int max, int n_cand, int with_sdol, int full
         int p = 0;
         uint8_t label[9] = { 'A', 'M', 'E', 'X', ' ', 'T', 'E', 'S', 'T' };
         uint8_t prio = 0x01;
+        uint8_t aidbuf[7];
+        int aidlen = 6;
 
-        /* The application template needs 4F only (50/87/9F2A are optional for
-         * candidate matching).  The "13 templates" case must stay within the
-         * Entry Point decode pool (EMV_TLVOBJ tlvs[40]), so it uses the minimal
-         * template: 13 x 2 objects instead of 13 x 4. */
-        p = put_tlv(one61, p, 0x4F, k_amex_aid, 6);
+        memcpy(aidbuf, k_amex_aid, 6);
+
+        /* The "13 templates" case (full == 0) must stay within the decode pool
+         * and exercise the candidate cap, so it reuses one AID (dedup would
+         * collapse it anyway; the cap triggers on the 13th add).  The "full"
+         * case needs *distinct* candidates: append one byte (partial AID match)
+         * so 10 fully-populated templates remain 10 candidates after dedup. */
+        if (full && n_cand > 1)
+        {
+            aidbuf[6] = (uint8_t)(0x10 + i);
+            aidlen = 7;
+        }
+        p = put_tlv(one61, p, 0x4F, aidbuf, aidlen);
         if (full)
         {
             p = put_tlv(one61, p, 0x50, label, 9);
@@ -574,6 +584,20 @@ static void case_a_link_and_register(void)
     CHECK((void*)&API_TimeGet != NULL,    "API_TimeGet present");
     CHECK((void*)&ics_option != NULL,     "ics_option present");
     CHECK((void*)&CreateEMVDiscretionaryData != NULL, "CreateEMVDiscretionaryData present");
+
+    /* The platform stub's RAM file system must have been used for real by
+     * emvporting: emv.par (apipara) + one terminal + one AID parameter record. */
+    CHECK_EQ(stub_fs_exists("emv.par"), 1, "emvporting must persist emv.par via API_fopen");
+    CHECK_EQ(stub_fs_exists("emvterm0.par"), 1, "emv_set_termparam must write emvterm0.par");
+    CHECK_EQ(stub_fs_exists("emvaids0.par"), 1, "emv_add_aidparam must write emvaids0.par");
+    CHECK_EQ(stub_fs_size_of("emvaids0.par"), 1024, "AID parameter record must be 1024 bytes");
+    {
+        uint8_t payload[1024];
+        int plen = stub_fs_read_param_payload("emvterm0.par", payload, (int)sizeof(payload));
+        CHECK(plen > 0, "terminal parameter file must contain a length-prefixed TLV payload");
+        CHECK_EQ(plen, stub_fs_size_of("emvterm0.par") - 4,
+              "terminal parameter payload length must match the file header");
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -632,25 +656,17 @@ static void case_b_amex_dispatch(void)
     CHECK(sel != NULL && sel->aid_len == 6 && memcmp(sel->aid, k_amex_aid, 6) == 0,
           "EMV_GetSelectedCandidate must expose the AMEX candidate to the kernel");
 
-    /* ---- known integration gaps (not required for reaching APP_SELECTED) ----
-     * The kernel context is reset to trans_type=UNKNOWN / trans_amount=0 in
-     * express_init() and express_preprocess() never copies the Entry Point
-     * transaction data, so express_app_sel_init() overwrites 9C/9F02/81 with
-     * 0xFF/0.  Amount-dependent logic (status check, DRL/limits, TAA) is
-     * therefore evaluated against zero in a real transaction. */
+    /* D1 fixed: the kernel takes transaction data from the Entry Point in
+     * express_preprocess() before it resets appdata. */
     p = EMV_GetData(TAG_9F02_AMOUNT_AUTHORISED_NUMERIC, &len);
-    KNOWN_FAIL(p != NULL && len == 6 &&
-               p[0] == 0x00 && p[1] == 0x00 && p[2] == 0x00 &&
-               p[3] == 0x00 && p[4] == 0x12 && p[5] == 0x34,
-               "kernel must pack the terminal transaction amount (9F02 = 000000001234)",
-               "kernels/expresspay/src/express_kernel.c:41-42 + express_preprocess(); "
-               "overwritten by kernels/expresspay/src/express_app_sel.c express_load_trans_amount()");
+    CHECK(p != NULL && len == 6 &&
+          p[0] == 0x00 && p[1] == 0x00 && p[2] == 0x00 &&
+          p[3] == 0x00 && p[4] == 0x12 && p[5] == 0x34,
+          "kernel must pack the terminal transaction amount (9F02 = 000000001234)");
 
     p = EMV_GetData(TAG_009C_TRANSACTION_TYPE, &len);
-    KNOWN_FAIL(p != NULL && len == 1 && p[0] == EMV_TRANSTYPE_GOODS_SERVICES,
-               "kernel must preserve the terminal transaction type (9C = 00)",
-               "kernels/expresspay/src/express_app_sel.c appdata_save(TAG_009C, ctx->trans_type) "
-               "with ctx->trans_type never set by Entry Point");
+    CHECK(p != NULL && len == 1 && p[0] == EMV_TRANSTYPE_GOODS_SERVICES,
+          "kernel must preserve the terminal transaction type (9C = 00)");
 }
 
 /* ---------------------------------------------------------------------------
@@ -677,6 +693,8 @@ static void case_c_malicious_sdol(void)
     CHECK_EQ(ret, EMV_ENDAPPLICATION, "malicious SDOL must end the application");
     CHECK(ret != EMV_STA_CANDIDATES_BUILT && ret != EMV_STA_APP_SELECTED,
           "malicious SDOL must not be treated as a normal application");
+    CHECK_EQ(stub_icc_cmd_count(), 1,
+          "oversized SDOL must be rejected before any SPI APDU is sent");
 
     p = EMV_GetData(TAG_9F3F_SDOL, &len);
     CHECK(p != NULL && len == 252, "the card-supplied SDOL must be stored (252 bytes)");
@@ -718,21 +736,16 @@ static void case_d_candidate_cap(void)
           "candidate count must be capped at EMV_CFG_MAX_CANDIDATES");
 
     /* d2: a spec-shaped PPSE where every 61 template also carries 50/87/9F2A.
-     * Each template is 4 TLV objects, so 10 templates + 4 containers = 44
-     * objects, which exceeds the decoder pool `EMV_TLVOBJ tlvs[40]` in
-     * src/emv_application_selection.c:882.  The response is then rejected as
-     * "FCI format invalid" before the candidates_num cap at :1073 is reached. */
+     * D2 fixed: the decoder pool now holds 4 containers + 12*4 template objects. */
     icc_reset_with_ppse(10, 0, 0);
     CHECK_EQ(tx_begin(), 0, "d2 transaction setup must succeed");
     ret = EMV_Process(&msg);
-    CHECK_EQ(ret, EMV_ENDAPPLICATION, "d2: undecodable PPSE must end the application");
+    CHECK(ret == EMV_REQ_SEL_CANDIDATES || ret == EMV_STA_CANDIDATES_BUILT,
+          "d2: spec-shaped PPSE must reach candidate selection");
 
     p = EMV_GetData(TAG_CANDIDATE_LIST, &len);
-    KNOWN_FAIL(p != NULL && (len / n) == 10,
-               "10 fully-populated app templates must decode and produce 10 candidates",
-               "src/emv_application_selection.c:882 EMV_TLVOBJ tlvs[40] holds 4 containers "
-               "+ 10*4 template objects = 44 > 40; emvtlv_decode fails at :885, so the "
-               "EMV_CFG_MAX_CANDIDATES cap at :1073 is never reached");
+    CHECK(p != NULL && (len / n) == 10,
+          "10 fully-populated app templates must decode and produce 10 candidates");
 }
 
 /* ---------------------------------------------------------------------------

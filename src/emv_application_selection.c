@@ -160,7 +160,7 @@ int32_t deal_spi_resp(uint8_t *resp, int32_t resp_len)
 	int32_t pos_aid,pos_label,pos_api,pos_kernelID,pos_extselect;
 	int32_t pos_temp;
 	EMV_CANDIDATE candidate={0};
-	EMV_TLVOBJ tlvs[40]={0};
+	EMV_TLVOBJ tlvs[56]={0};
 
 	if (emvtlv_decode(resp, resp_len, tlvs, sizeof(tlvs)/sizeof(tlvs[0]), SINGLE_TLVOBJ) < 0)
 	{
@@ -688,7 +688,7 @@ int32_t deal_pse_resp(uint8_t *resp, int32_t resp_len)
     int32_t pos_fci, pos_dfname, pos_fci_prop,pos_fci_issuer,pos_sfi,pos_aef_data_temp;
 	int32_t pos_aid,pos_label,pos_api,pos_ddf_name,pos_perf_name;
     EMV_CANDIDATE candidate={0};
-    EMV_TLVOBJ tlvs[40]={0};
+    EMV_TLVOBJ tlvs[56]={0};
 	bool mandatory_exist=false;
 	uint8_t sfi, recno = 1;
 
@@ -879,7 +879,7 @@ int32_t deal_ppse_resp(uint8_t *resp, int32_t resp_len)
     int32_t pos_fci, pos_dfname, pos_fci_prop,pos_fci_issuer;
 	int32_t pos_aid,pos_label,pos_api,pos_kernelID,pos_extselect;
     EMV_CANDIDATE candidate={0};
-    EMV_TLVOBJ tlvs[40]={0};
+    EMV_TLVOBJ tlvs[56]={0};
 	bool mandatory_exist=false;
 
 	if (emvtlv_decode(resp, resp_len, tlvs, sizeof(tlvs)/sizeof(tlvs[0]), SINGLE_TLVOBJ) < 0)

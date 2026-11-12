@@ -107,20 +107,25 @@ foreach ($src in @((Join-Path $TestDir 'stub\stub_platform.c'), (Join-Path $Test
 }
 
 # ---- 3) link: objects + libexpresspay.a + libentrypoint.a ------------------
-# Link order matters for static libraries: the kernel leans on the Entry Point,
-# so expresspay must come before entrypoint.  A failure here means a platform
-# symbol is still missing from the stub (the link gate).
-Write-Host "-- linking (unresolved-symbol gate)" -ForegroundColor DarkGray
+# /WHOLEARCHIVE pulls *every* object out of both static libraries, so this link
+# fails if ANY translation unit in either library still has an unresolved
+# external symbol.  That makes the link itself the full "no unresolved platform
+# symbol" gate (not just the objects reachable from the test).
+Write-Host "-- linking (whole-archive unresolved-symbol gate)" -ForegroundColor DarkGray
 $LinkArgs = @()
 $LinkArgs += $Objs
-$LinkArgs += @($LibEx, $LibEp, '-o', $Exe)
+$LinkArgs += @(
+    ("-Wl,/WHOLEARCHIVE:" + $LibEx),
+    ("-Wl,/WHOLEARCHIVE:" + $LibEp),
+    '-o', $Exe
+)
 $linkOut = & $Clang @LinkArgs 2>&1
 if ($LASTEXITCODE -ne 0) {
     $linkOut | Select-Object -First 30 | ForEach-Object { Write-Host ("   " + $_) -ForegroundColor Red }
     Write-Host "HOST E2E: FAIL (link gate: unresolved symbols or library error)" -ForegroundColor Red
     exit 1
 }
-Write-Host "   linked: $Exe" -ForegroundColor Green
+Write-Host "   linked: $Exe (whole-archive: libexpresspay.a + libentrypoint.a)" -ForegroundColor Green
 
 # ---- 4) run -----------------------------------------------------------------
 Write-Host ""

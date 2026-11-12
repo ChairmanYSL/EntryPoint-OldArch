@@ -65,9 +65,8 @@ struct: EMV_AIDPARAM=632  EMV_TERMPARAM=486  EMV_TERMAPP=22  EMV_CANDIDATE=65  E
 ## 5. 仍未闭环（下一阶段）
 
 1. ~~**结构体第 2 步**~~（已完成 2026-11-12）：`EMV_AIDPARAM` 55B/18 字段、`EMV_TERMPARAM` 23B/6 字段，含编译期尺寸断言（doc/STRUCT_MINIMIZATION.md）。
-2. ~~**host 桩 ICC 端到端测试**~~（已完成 2026-11-12）：`scripts/test_host.ps1` → 65 断言 / 0 失败 / 2 条已文档化 KNOWN-FAIL（见下）；覆盖链接门禁、AMEX 注册与调度、恶意 SDOL、候选上限、DOL 边界、appdata 复位。
-   - KNOWN-FAIL-1：内核需保留终端金额 9F02（`kernels/expresspay/src/express_app_sel.c` 的 `express_load_trans_amount()` 覆盖了 Entrypoint 写入值）。
-   - KNOWN-FAIL-2：内核需终端交易类型 9C（Entrypoint 未向内核提供 `ctx->trans_type`，`express_app_sel.c` 写入默认值）。
+2. ~~**host 桩 ICC 端到端测试**~~（已完成 2026-11-12）：`scripts/test_host.ps1` → **75 断言 / 0 失败 / 0 KNOWN-FAIL**（whole-archive 真链接门禁）；覆盖链接门禁、AMEX 注册与调度、恶意 SDOL、候选上限、DOL 边界、appdata 复位。
+   - 测试暴露并已修复：D1（内核拿不到 9F02/9C：在 `express_preprocess` 从 Entrypoint 取交易数据）；D2（PPSE 解码池 `tlvs[40]` 容不下 12 个完整候选：扩到 56 并验证 10 个完整模板→10 候选）。
 3. **G5 自动合并**：内核 Outcome 已可取出（`EMV_GetKernelOutcome`），但 Entrypoint 尚未按 Book B 11 参数规则自动组装最终 Outcome。
 4. **Expresspay v4.2 精修**：删除 MSD 分支、9F6D/9F6E 判定替代 TTQ、离线 PIN 禁止、2nd GAC/脚本/DDX 按规范处理。
 5. **G2 DRL getter**（v4.2 已移除 DRL，可延后）；**IAR 工程复编**（本机无 IAR）；**真实测试卡/读卡器与 EMVCo TTA 认证**。

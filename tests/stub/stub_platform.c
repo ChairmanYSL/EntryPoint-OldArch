@@ -15,6 +15,8 @@
 * This file is test infrastructure only and is never linked into the product.
 ************************************************************************************************************************
 */
+#define _CRT_SECURE_NO_WARNINGS 1
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>

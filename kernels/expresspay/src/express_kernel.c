@@ -135,6 +135,29 @@ int32_t express_preprocess(uint8_t b_online)
     emv_memcpy(g_express_cnxt->ttq, g_express_cnxt->term.ttq, 4);
 
     g_express_cnxt->force_online = b_online;
+
+    /* D1: copy the transaction data from the Entry Point before the kernel resets
+     * appdata in express_app_sel_init(); amounts are in minor units (9F02/81). */
+    {
+        uint8_t trans_type = 0;
+        uint8_t* p;
+        int32_t  len = 0;
+
+        if (EMV_GetTransType(&trans_type) == EMV_OK)
+        {
+            g_express_cnxt->trans_type = trans_type;
+        }
+        p = EMV_GetData(TAG_0081_AMOUNT_AUTHORISED_BINARY, &len);
+        if (p != NULL && len == 4)
+        {
+            g_express_cnxt->trans_amount = emv_hex2dec(p, 4);
+        }
+        p = EMV_GetData(TAG_9F04_AMOUNT_OTHER_BINARY, &len);
+        if (p != NULL && len == 4)
+        {
+            g_express_cnxt->trans_amount_other = emv_hex2dec(p, 4);
+        }
+    }
     g_express_cnxt->card_types_allowed = EMV_CARD_UNKNOWN;
 
     if (ttq_get(BN_TTQ_SUP_PBOC))
