@@ -115,6 +115,10 @@ static const uint32_t crc_table[] =
 #define DO2(buf) DO1(buf); DO1(buf);
 #define DO4(buf) DO2(buf); DO2(buf);
 #define DO8(buf) DO4(buf); DO4(buf);
+/* Entry Point private storage for issuer script templates 71/72 (raw appdata tags,
+ * deliberately outside the EMV tag database to avoid collisions with DS Summary tags). */
+#define EP_TAG_ISSUER_SCRIPT_71_BASE  0xDF8F10u
+#define EP_TAG_ISSUER_SCRIPT_72_BASE  0xDF8F20u
 #define TLVBUFFER_SIZE (10*1024)
 
 
@@ -1568,8 +1572,8 @@ int32_t EMV_ResultForceOnline(int32_t eResult)
 int32_t EMV_ResultOnline(int32_t eResult, uint8_t* pResp, int32_t nRespLen)
 {
     int32_t i;
-    uint32_t tag1 = TAG_ISSUER_SCRIPT_71_BASE;
-    uint32_t tag2 = TAG_ISSUER_SCRIPT_72_BASE;
+    uint32_t tag1 = EP_TAG_ISSUER_SCRIPT_71_BASE;
+    uint32_t tag2 = EP_TAG_ISSUER_SCRIPT_72_BASE;
     EMV_TLVOBJ tlvs[64];
 
     if (g_emv_cnxt == NULL)
@@ -1593,7 +1597,7 @@ int32_t EMV_ResultOnline(int32_t eResult, uint8_t* pResp, int32_t nRespLen)
                         tlvs[i].tagname = tag1++;
                     else if (tlvs[i].tagname == TAG_0072_ISSUER_SCRIPT_TEMPLATE_2)
                         tlvs[i].tagname = tag2++;
-                    appdata_save_tlv(tlvs + i, OVERRIDED, 0xFFFFFFFF);
+                    (void)appdata_save_raw(tlvs[i].tagname, tlvs[i].pvalue, tlvs[i].valuelen, OVERRIDED);
                 }
             }
         }
@@ -2006,8 +2010,10 @@ int32_t EMV_TLV_PacketByTAG(uint32_t* pTags, int32_t nTagNum, uint8_t* pOut, int
 
 int32_t EMV_ProcessExit(void)
 {
+    (void)appdata_reset();
     if (g_emv_cnxt == NULL)
     {
+    (void)appdata_reset();
         return EMV_UNINITIALIZED;
     }
 

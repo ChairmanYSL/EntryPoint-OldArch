@@ -471,6 +471,12 @@ int32_t appdata_save_iccdata(uint32_t tag);
 uint8_t* appdata_find(uint32_t tag, int32_t *pvaluelen);
 int32_t appdata_save_singlebyte(uint32_t tag, uint8_t value, int32_t override);
 int32_t appdata_save_tlv(EMV_TLVOBJ *tlv, int32_t override, uint32_t template);
+/* Reset the appdata hash table / pool between transactions (no allocation). */
+int32_t appdata_reset(void);
+
+/* Save a value without tag-database validation (kernel-internal fixed tags only,
+ * e.g. issuer script templates 0xDF8100/0xDF8200). Same length/capacity checks. */
+int32_t appdata_save_raw(uint32_t tag, const uint8_t *value, int32_t valuelen, int32_t override);
 int32_t appdata_save_or(uint32_t tag, int32_t index, uint8_t value);
 int32_t appdata_save_and(uint32_t tag, int32_t index, uint8_t value);
 ////////////////////////////////////////////////////////////////////////////////

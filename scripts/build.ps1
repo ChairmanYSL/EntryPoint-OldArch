@@ -20,7 +20,8 @@ param(
     [string]$Target = 'host',
     [switch]$WerrorAll,
     [switch]$NoAudit,
-    [string]$Tag = ''
+    [string]$Tag = '',
+    [switch]$SkipKernels
 )
 
 $ErrorActionPreference = 'Continue'
@@ -70,7 +71,7 @@ $Modules = @(
     }
 )
 $ExpresspayDir = Join-Path $Root 'kernels\expresspay'
-if (Test-Path (Join-Path $ExpresspayDir 'src')) {
+if ((-not $SkipKernels) -and (Test-Path (Join-Path $ExpresspayDir 'src'))) {
     $Modules += @{
         Name     = 'expresspay'
         SrcDirs  = @((Join-Path $ExpresspayDir 'src'))
