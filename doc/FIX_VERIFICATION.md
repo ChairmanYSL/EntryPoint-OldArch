@@ -7,9 +7,10 @@
 ## 1. 当前门禁结果（每次提交前复跑）
 
 ```
-host : libentrypoint.a 195,770 B + libexpresspay.a 88,890 B  → BUILD OK(27 TU) + SYMBOL AUDIT OK
-ndk  : libentrypoint.a 196,734 B + libexpresspay.a 84,322 B  → BUILD OK(27 TU) + SYMBOL AUDIT OK
-struct: EMV_AIDPARAM=632  EMV_TERMPARAM=486  EMV_TERMAPP=22  EMV_CANDIDATE=65  EMV_PREPROCESS_RESULT=26
+host : libentrypoint.a 195,278 B + libexpresspay.a 85,080 B  → BUILD OK(27 TU) + SYMBOL AUDIT OK（-WerrorAll 严格模式）
+ndk  : libentrypoint.a 196,728 B + libexpresspay.a 81,518 B  → BUILD OK(27 TU) + SYMBOL AUDIT OK（-WerrorAll 严格模式）
+struct: EMV_TERMPARAM=23  EMV_AIDPARAM=55  EMV_TERMAPP=22  EMV_CANDIDATE=65  EMV_PREPROCESS_RESULT=26
+tests : HOST E2E 85 assertions / 0 failures / 0 known-fails（/WHOLEARCHIVE 链接门禁）
 ```
 
 ## 2. P0（9 条唯一项）逐条状态
@@ -79,3 +80,19 @@ cd E:\Work\ZT\Entrypoint
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1   # host+NDK+结构体尺寸+产物汇总
 git log --oneline master..HEAD                                           # 本次全部提交
 ```
+## 7. 最终验收结论（2026-11-12）
+
+| 目标 | 状态 | 证据 |
+|---|---|---|
+| (1) 修复 review/00 的 P0/P1，删除货币代码 API（改用 5F2A/5F36） | ✅ | 本文 §2/§3 逐条映射；`emv_set/get_current_code(_exponpent)` 已删除 |
+| (2) 解耦架构：EP 独立编译、内核链接 EP | ✅ | `src/inc/emv_kernel.{h,c}` 注册表；符号审计强制 EP 无内核符号；`libexpresspay.a` 链接 `libentrypoint.a` |
+| (3) AID/TermParam 最小化、减小产物体积 | ✅ | EP: `EMV_AIDPARAM` 1118→55 B（-95%）、`EMV_TERMPARAM` 486→23 B（-95%），编译期尺寸断言；Expresspay: `EXPRESS_TERM_PARAM` 34 B、AID 参数最小集 |
+| (4) AMEX V4.2.3 移植接入 + 修复其缺陷 | ✅（本机可达范围） | `kernels/expresspay` 13 TU/≈7.4k 行，kernel_id=0x04 注册；美运 P0×3/P1×11 + 移植新发现 P0/P1 已修；v4.2 精修（MSD/TTQ/离线 PIN/2nd GAC/脚本/DDX）完成 |
+| (5) host + NDK 编译门禁、编译期排除静态错误 | ✅ | `scripts/build.ps1`（`-WerrorAll` 全库 0 warning）+ `symbol_audit.ps1`（解耦/堆/未定义符号）+ `verify.ps1` 一键；NDK r23b armeabi-v7a 构建通过 |
+| (6) 功能分支、master 原始基线、最终提交 + 验证报告 | ✅ | `master`=唯一基线提交；全部开发在 `feature/amex-entrypoint`；本文 + doc/ARCHITECTURE、doc/TESTING、doc/EXPRESSPAY_PORT_STATUS |
+
+**本机不可验证/后续认证项（已文档化，不阻塞代码交付）**：
+1. IAR EWARM 复编（本机无 IAR；.ewp 文件列表已同步，expresspay 建议新建独立 IAR 工程并链接 entrypoint 库）。
+2. 真实测试卡/读卡器联调与 EMVCo TTA（Book AB v2.10）认证测试。
+3. 桩 ICC 的 GPO→READ→GAC→ARQC→ARC 全流程用例（当前 ODA/CVM 桩能力受限；已覆盖选卡/组合/内核激活/恶意 SDOL/候选上限/DOL 边界/appdata 复位/Outcome 组装）。
+4. 规范明示不支持的 Expresspay 能力（MSD、TTQ、离线 PIN、2nd GAC、71/72 脚本、DDX、DRL、TSI/9F40、Issuer Referral）按规范保持不支持。
