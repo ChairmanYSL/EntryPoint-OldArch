@@ -74,6 +74,8 @@
 #endif
 /* 注意：Entrypoint 公共 emv_tag.h 把 TAG_DEFAULT_TDOL 定义为 PayPass 的 0xDF8102；
  * 美运 V4.2.3 用 0x1F03（emv_tag.h:568），必须覆盖，否则 TDOL 装载/注入全部失效。 */
+#define TAG_DF8102_DEFAULT_TDOL           0xDF8102  /* Entrypoint/PayPass convention (alias accepted) */
+#define TAG_DFC108_STATUS_CHECK_SUPPORT   0xDFC108  /* Entrypoint/PayPass convention (alias accepted) */
 #undef  TAG_DEFAULT_TDOL
 #define TAG_DEFAULT_TDOL                    0x1F03  /* emv_tag.h:568（覆盖 Entrypoint 的 DF8102） */
 #ifndef TAG_DF15_THRESHOLD_VALUE

@@ -84,6 +84,18 @@ static apipara_context g_apipara_ctx;
 *                                               IMPLEMENTATION FUNCTIONS
 ************************************************************************************************************************
 */
+
+/* Parameter tag aliases: the AMEX/Expresspay kernel parameter files use 0x1F03
+ * (Default TDOL) and 0x1F02 (Status Check Support Indicator), while the PayPass
+ * convention (and this file's default macros) use 0xDF8102 / 0xDFC108.
+ * Accept both in the Entry Point parameter layer so one file can serve both. */
+#ifndef TAG_1F02_STATUS_CHECK_SUPPORT
+#define TAG_1F02_STATUS_CHECK_SUPPORT   0x1F02u
+#endif
+#ifndef TAG_1F03_DEFAULT_TDOL
+#define TAG_1F03_DEFAULT_TDOL           0x1F03u
+#endif
+
 #define PARA_SAVLEN     (1024)
 #define PARA_LENLEN     (4)
 #define PARA_MAXLEN     (PARA_SAVLEN-PARA_LENLEN)
@@ -313,6 +325,8 @@ static bool param_len_ok(uint32_t tag, int32_t valuelen)
     {
     case TAG_ICS:                                   PARAM_LEN_EQ(7);
     case TAG_STATUS_CHECK_SUPPORT_INDICATOR:        PARAM_LEN_EQ(1);
+    case TAG_1F02_STATUS_CHECK_SUPPORT:             PARAM_LEN_EQ(1);
+    case TAG_1F03_DEFAULT_TDOL:                     PARAM_LEN_LE(252);
     case TAG_9F01_ACQUIRER_IDENTIFIER:              PARAM_LEN_LE(6);
     case TAG_9F1E_IFD_SERIAL_NUMBER:                PARAM_LEN_LE(8);
     case TAG_9F15_MERCHANT_CATEGORY_CODE:           PARAM_LEN_LE(2);
