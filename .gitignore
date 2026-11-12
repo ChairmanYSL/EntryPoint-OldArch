@@ -1,6 +1,7 @@
 # ---- build outputs ----
 /build/iar/Debug/
 /build/iar/Release/
+/tests/build/
 /build_host/
 /build_*/
 /build_ndk/
