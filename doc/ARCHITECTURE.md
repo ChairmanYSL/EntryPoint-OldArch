@@ -108,8 +108,14 @@ int32_t EMV_KernelProcess(void);                          /* EP 内部调度 */
 
 ## 7. 剩余工作
 
-见 `doc/EXPRESSPAY_PORT_STATUS.md` 与仓库提交记录；主要剩余项：
-1. AMEX L2 阶段完整逻辑移植与规范对齐（S2-S4 部分阶段）。
-2. Entrypoint 侧 `EMV_TERMPARAM/EMV_AIDPARAM` 最小化（当前为兼容超集，方案见 `doc/AMEX_PORT_PLAN.md §5`）。
-3. IAR 工程文件同步（本机无 IAR，只做文件列表更新，需在有 IAR 环境复编）。
-4. 真实测试卡/读卡器联调与 EMVCo TTA 认证测试。
+见 `doc/EXPRESSPAY_PORT_STATUS.md`、`doc/DECISIONS.md` 与仓库提交记录；当前状态：
+
+- **已落地**：S1-S4（Expresspay 子内核 13 TU 编译/链接/注册），G9（EMV_Result* → 内核 `post_result`、`EMV_ProcessExit` → 内核 `exit`，2026-11-12 提交 `9fb6295`）；G6（`EMV_GetSelectedCandidate`）；G1（参数原始 TLV 回读声明）；G8（组合选择/内核选择解耦）。
+- **待落地（按优先级）**：
+  1. **标签口径统一**：内核 TDOL 用 `0x1F03`、Status Check 用 `0x1F02`，Entrypoint `emvporting.c` 用 `0xDF8102`/`0xDFC108`。同一份参数文件服务两套解析时必须双 tag 兼容或统一口径（否则内核拿不到 TDOL/StatusCheck 指示）。
+  2. **G2** DRL getter（`emv_get_drl`）：Expresspay v4.2 已移除 DRL，可继续用 AID 级 DF19/DF20/DF21 回退；如需支持旧配置再补。
+  3. **G5** Outcome 合并：内核 `express_get_outcome()` 已实现，Entrypoint 组装 Outcome 时尚未合并 Expresspay 私有 0xA0/0xB0/0xC0/0xD0 值。
+  4. **spec v4.2 精修**：删除 MSD 分支、9F6D/9F6E 判定重写（Amex 无 TTQ）、离线 PIN 强制禁止、2nd GAC/脚本/DDX 按规范处理。
+  5. **桩 ICC 端到端**：GPO→READ→GAC→ARQC→ARC=00 全流程联调（当前仅编译/链接/静态审计）。
+  6. Entrypoint 侧 `EMV_TERMPARAM/EMV_AIDPARAM` 第 2 步最小化（`doc/STRUCT_MINIMIZATION.md`）。
+  7. IAR 工程复编（本机无 IAR）、真实测试卡/读卡器与 EMVCo TTA 认证。
