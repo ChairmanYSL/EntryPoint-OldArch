@@ -973,21 +973,21 @@ for(;;)
 {
     if ((fd = API_fopen(EMV_FNAME(_TERMPARAM), F_RDONLY)) <= 0)
     {
-        rERR(ErFOPEN);break;
+		break;
         return rERR(ErFOPEN);
     }
 
     if (API_fseek(fd, 0, F_SEEK_SET) < 0)
     {
         API_fclose(fd);
-        rERR(ErFSEEK);break;
+		break;
         return rERR(ErFSEEK);
     }
 
     if (API_fread(fd, buf, PARA_SAVLEN) < PARA_LENLEN)
     {
         API_fclose(fd);
-        rERR(ErFREAD);break;
+		break;
         return rERR(ErFREAD);
     }
 
@@ -996,7 +996,7 @@ for(;;)
     API_memcpy(&len, buf, PARA_LENLEN);
     if (len <= 0 || len > PARA_MAXLEN)
     {
-        rERR(ILL_AIDPARAMLEN);break;
+		break;
         return rERR(ILL_AIDPARAMLEN);
     }
 
@@ -1530,7 +1530,7 @@ int32_t emvporting_add_capkparam(uint8_t* par, int32_t len)
         return rERR(ErFUNCPAR);
     }
 
-    if (ret=conv_capkparam(&capkpar, par, len))
+    if ((ret = conv_capkparam(&capkpar, par, len)))
     {
         TRACE("ret[%d]",ret);
         return rERR(ILL_CAPKPARAM);
@@ -2117,7 +2117,7 @@ static int32_t conv_drlparam(BCTC_DRL* out, uint8_t* in, int32_t inlen)
 
     API_memset(out, 0, sizeof(BCTC_DRL));
 
-    if (pos = EMV_TLV_Find(0, 0xDF22, tlvs, SEARCH_ALL_DESC))
+    if ((pos = EMV_TLV_Find(0, 0xDF22, tlvs, SEARCH_ALL_DESC)))
     {
 		if((tlvs[pos].pvalue[0] & 0x80) == 0x80)
 		{
@@ -2131,7 +2131,7 @@ static int32_t conv_drlparam(BCTC_DRL* out, uint8_t* in, int32_t inlen)
 			out->Index = tlvs[pos].pvalue[0] & 0x0F;
 		}
     }
-    if (pos = EMV_TLV_Find(0, 0xDF19, tlvs, SEARCH_ALL_DESC))
+    if ((pos = EMV_TLV_Find(0, 0xDF19, tlvs, SEARCH_ALL_DESC)))
 	{
 		if(6 == tlvs[pos].valuelen)
 		{
@@ -2147,7 +2147,7 @@ static int32_t conv_drlparam(BCTC_DRL* out, uint8_t* in, int32_t inlen)
 		emv_memcpy(out->CLROFFLimit, "\xFF\xFF\xFF\xFF\xFF\xFF", 6);
 	}
 
-	if (pos = EMV_TLV_Find(0, 0xDF20, tlvs, SEARCH_ALL_DESC))
+	if ((pos = EMV_TLV_Find(0, 0xDF20, tlvs, SEARCH_ALL_DESC)))
 	{
 		if(6 == tlvs[pos].valuelen)
 		{
@@ -2162,7 +2162,7 @@ static int32_t conv_drlparam(BCTC_DRL* out, uint8_t* in, int32_t inlen)
 	{
 		emv_memcpy(out->CLRTLimit, "\xFF\xFF\xFF\xFF\xFF\xFF", 6);
 	}
-	if (pos = EMV_TLV_Find(0, 0xDF21, tlvs, SEARCH_ALL_DESC))
+	if ((pos = EMV_TLV_Find(0, 0xDF21, tlvs, SEARCH_ALL_DESC)))
 	{
 		if(6 == tlvs[pos].valuelen)
 		{
