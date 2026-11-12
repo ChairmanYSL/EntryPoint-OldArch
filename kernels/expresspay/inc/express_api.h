@@ -54,7 +54,7 @@ typedef struct exp_kernel_ops
 #define EXPRESS_RESULT_SEL_ACCOUNT_TYPE      2  /* EMV_ResultSelAccountType */
 #define EXPRESS_RESULT_CHECK_ID              3  /* EMV_ResultCheckID */
 #define EXPRESS_RESULT_ONLINE_PIN            4  /* EMV_ResultOnlinePIN（data=pin, len=pinlen） */
-#define EXPRESS_RESULT_OFFLINE_PIN           5  /* EMV_ResultOfflinePIN（data=pin, len=pinlen） */
+#define EXPRESS_RESULT_OFFLINE_PIN           5  /* EMV_ResultOfflinePIN：Expresspay v4.2 禁止离线 PIN（P p23 §2.10.1），内核忽略并置 UNSUPPORTED；仅为 ABI 兼容保留 */
 #define EXPRESS_RESULT_BYPASS_PIN            6  /* EMV_ResultBypassPIN */
 #define EXPRESS_RESULT_FORCE_ONLINE          7  /* EMV_ResultForceOnline */
 #define EXPRESS_RESULT_ONLINE                8  /* EMV_ResultOnline（data=resp 55 域, len=resplen） */

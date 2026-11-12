@@ -70,7 +70,16 @@ static void express_init_term_defaults(EXPRESS_TERM_PARAM *tpar)
     tpar->term_type = 0x22;
     emv_memcpy(tpar->term_caps, "\xE0\xF8\xC8", 3);
     emv_memcpy(tpar->term_add_caps, "\xFF\x80\xF0\xA0\x01", 5);
-    emv_memcpy(tpar->ttq, "\x36\x00\x00\x80", 4);
+    /* Expresspay v4.2 终端能力缺省（Table 21-7 p89 / Table 21-9 p90-91）：
+     * 9F6D = 1100 0000b（≥3.0 EMV，CVM Not Required；b4 由 pre-PDOL 按金额动态置位）
+     * 9F6E = 9C E0 00 03：
+     *   B1=1001 1100b  b8=1 支持 AEIPS 接触 / b7=0 不支持 Magstripe / b5=1 partial online /
+     *                  b4=1 Mobile / b3=1 允许 Try Another Interface（b8=1 时本位必须为 1）
+     *   B2=1110 0000b  b8=1 Mobile CVM / b7=1 Online PIN / b6=1 Signature / b5=0 不使用离线 PIN
+     *   B3=00         每笔动态（pre-PDOL 重算）
+     *   B4=03         Expresspay Kernel Version = 4.x */
+    tpar->cl_capability = 0xC0;
+    emv_memcpy(tpar->enhanced_cl_capability, "\x9C\xE0\x00\x03", 4);
     tpar->status_check_support = 1;
     tpar->ec_support = 0;
     tpar->sm_support = 0;
@@ -104,6 +113,8 @@ static void express_init_aid_defaults(EXPRESS_AID_PARAM *apar)
     apar->term_type = 0x22;
     emv_memcpy(apar->term_cap, "\xE0\xF8\xC8", 3);
     emv_memcpy(apar->term_add_cap, "\xFF\x80\xF0\xA0\x01", 5);
+    apar->cl_capability = 0xC0;
+    emv_memcpy(apar->enhanced_cl_capability, "\x9C\xE0\x00\x03", 4);
     apar->status_check_sup = 1;
 }
 
@@ -159,7 +170,16 @@ static void express_conv_param(EXPRESS_TERM_PARAM *tpar, EXPRESS_AID_PARAM *apar
                     express_copy_fixed(tpar->term_add_caps, sizeof(tpar->term_add_caps), tlvs[i].pvalue, tlvs[i].valuelen);
                     break;
                 case TAG_9F66_TERMINAL_TRANSACTION_QUALIFIERS:
-                    express_copy_fixed(tpar->ttq, sizeof(tpar->ttq), tlvs[i].pvalue, tlvs[i].valuelen);
+                    /* Expresspay v4.2 无 TTQ（9F66 全文 0 次，spec 笔记 §3.6）。主机若仍下发，
+                     * 内核**忽略**；终端能力只认 9F6D/9F6E（见下两个 case）。 */
+                    eTRACE("AMEX-warning: TTQ(9F66) is not used by Expresspay v4.2, ignored");
+                    break;
+                case TAG_ClessReaderCapab:
+                    tpar->cl_capability = tlvs[i].pvalue[0];
+                    break;
+                case TAG_EnhancedClessReaderCapab:
+                    express_copy_fixed(tpar->enhanced_cl_capability, sizeof(tpar->enhanced_cl_capability),
+                                       tlvs[i].pvalue, tlvs[i].valuelen);
                     break;
                 case TAG_STATUS_CHECK_SUPPORT_INDICATOR:
                     tpar->status_check_support = tlvs[i].pvalue[0];

@@ -146,7 +146,7 @@ static int express_select_final(const EMV_CANDIDATE *cand)
 
 /* ---------------------------------------------------------------------------
  * AID 级限额预处理（美运 emv_application_selection.c:664-721 again_preprocess）
- * 结果写入上下文标志 CANAI/CVMRLEF/TermEFLEF（供 express_set_ttq / TRM 使用）。
+ * 结果写入上下文标志 CANAI/CVMRLEF/TermEFLEF（供 express_set_cvm_required / TRM 使用）。
  * ------------------------------------------------------------------------- */
 static int express_again_preprocess(EXPRESS_AID_PARAM *param)
 {

@@ -43,7 +43,7 @@ build_ndk/…                            （NDK 目标，同结构）
 - `-std=c99 -Os -ffunction-sections -fdata-sections -fno-common`
 - `-Wall -Wextra`（常见噪音关闭），**静态错误一律为 error**：
   `-Werror=implicit-function-declaration -Werror=incompatible-pointer-types -Werror=int-conversion -Werror=return-type -Werror=implicit-int`
-- 可选 `-WerrorAll`：全部警告升级为 error（当前尚有约 39 条历史 warning，清完后启用）。
+- `-WerrorAll`：全部警告升级为 error。**2026-11-12 起全库 0 warning，`verify.ps1` 默认以此严格模式构建（host + NDK）**。
 - 宏：默认 `EMV_CFG_DEBUG=DISABLE`（日志关闭）；需要调试时 `-DEMV_CFG_DEBUG=ENABLE`（需在 build.ps1 增加编译定义）。
 
 ## 4. 符号审计规则（scripts/symbol_audit.ps1）

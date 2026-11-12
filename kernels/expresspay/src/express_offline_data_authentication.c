@@ -117,7 +117,9 @@ static int express_retrieve_capk(EMV_PUBLICKEY* capk)
     if (pki == NULL)
     {
 		eTRACE("AMEX-error: miss capk index");
-        return (rERR(DA_NOCAPKI),DA_ICCDATAMISSING);
+        /* 返回 DA_ICCDATAMISSING（而不是 DA_NOCAPKI），调用方据此置 TVR b1b6=1
+         * （原代码用逗号表达式，左操作数被丢弃且掩盖了真实意图）。 */
+        return rERR(DA_ICCDATAMISSING);
     }
 
     if (EMVPORT_GetCapkParam(&cert, *pki, rid))
@@ -225,7 +227,8 @@ static int express_retrieve_pk_from_icc(certificate *cert, int certtype, EMV_PUB
     {
         if (cert->_pk_remainder == NULL)
         {
-            return (rERR(DA_NOPKREM),DA_ICCDATAMISSING);
+            /* 与上面同理：返回 DA_ICCDATAMISSING 让调用方置 TVR b1b6=1 */
+            return rERR(DA_ICCDATAMISSING);
         }
         if (cert->_pk_remainder_len + cert_cap_len != buf[pos + 7])
         {
@@ -370,7 +373,7 @@ static int express_retrieve_pk_from_icc(certificate *cert, int certtype, EMV_PUB
 static int express_retrieve_pk_from_icc_temp(certificate *cert, int certtype, EMV_PUBLICKEY *pkin, EMV_PUBLICKEY *pkout)
 {
     int pos = 0, cert_cap_len, i, ilen, tlen;
-    u8* ptmp,*AIP;
+    u8* ptmp;
     u8 buf[256];
     u8 calc[2048]; /* hash source, plus 42/36 remainder + 3 exponent */
     u8 digest[20];
@@ -435,7 +438,8 @@ static int express_retrieve_pk_from_icc_temp(certificate *cert, int certtype, EM
 			{
 				eTRACE("AMEX-error: ICCPK Reminder miss");
 			}
-            return (rERR(DA_NOPKREM),DA_ICCDATAMISSING);
+            /* 返回 DA_ICCDATAMISSING 让调用方置 TVR b1b6=1（原逗号表达式丢弃了左操作数） */
+            return rERR(DA_ICCDATAMISSING);
         }
         if (cert->_pk_remainder_len + cert_cap_len != buf[pos + 7])
         {
@@ -461,7 +465,7 @@ static int express_retrieve_pk_from_icc_temp(certificate *cert, int certtype, EM
         /* only for ICC PK Certificate */
         if ((ptmp = appdata_find(TAG_AUTH_DATA, &ilen)))
         {
-			eTRACE_HEX("AMEX-info: Auth Data", AIP, ilen);
+			eTRACE_HEX("AMEX-info: Auth Data", ptmp, ilen);
             emv_memcpy(calc + tlen, ptmp, ilen);
         }
         tlen += ilen;
@@ -472,9 +476,13 @@ static int express_retrieve_pk_from_icc_temp(certificate *cert, int certtype, EM
             /* if Static Data Authentication Tag List is present */
             if (ilen == 1 && *ptmp == TAG_0082_AIP)
             {
-				AIP = appdata_find(TAG_0082_AIP, &ilen);
-				eTRACE_HEX("AMEX-info: AIP", AIP, ilen);
-                emv_memcpy(calc + tlen, appdata_find(TAG_0082_AIP, NULL ), 2);
+				u8 *aip = appdata_find(TAG_0082_AIP, &ilen);
+				eTRACE_HEX("AMEX-info: AIP", aip, ilen);
+				if (aip == NULL || ilen < 2)
+				{
+					return rERR(DA_ICCDATAMISSING);
+				}
+                emv_memcpy(calc + tlen, aip, 2);
                 tlen += 2;
             }
             else
@@ -602,11 +610,11 @@ static int express_retrieve_issuer_pk(EMV_PUBLICKEY *capk, EMV_PUBLICKEY* isspk)
     /* prepare the issuer public key certificate related data objects */
     if ((cert._cert = appdata_find(TAG_0090_ISSUER_PUBLIC_KEY_CERTIFICATE, &(cert._cert_len))) == NULL)
     {
-        return (rERR(DA_NOISSPKCERT),DA_ICCDATAMISSING);
+        return rERR(DA_ICCDATAMISSING);   /* 调用方据此置 TVR b1b6=1 */
     }
     if ((cert._pk_exponent = appdata_find(TAG_9F32_ISSUER_PUBLIC_KEY_EXPONENT, &(cert._pk_exponent_len))) == NULL)
     {
-        return (rERR(DA_NOISSPKEXP),DA_ICCDATAMISSING);
+        return rERR(DA_ICCDATAMISSING);   /* 同上 */
     }
     cert._pk_remainder = appdata_find(TAG_0092_ISSUER_PUBLIC_KEY_REMAINDER, &(cert._pk_remainder_len)); /* optional */
     cert._pan = appdata_find(TAG_005A_APPLICATION_PAN, &(cert._pan_len)); /* PAN must be existing from readrec.c */
@@ -639,11 +647,11 @@ static int express_retrieve_icc_pk(EMV_PUBLICKEY *isspk, EMV_PUBLICKEY *iccpk)
     /* prepare the icc public key certificate related data objects */
     if ((cert._cert = appdata_find(TAG_9F46_ICC_PUBLIC_KEY_CERTIFICATE, &(cert._cert_len))) == NULL)
     {
-        return (rERR(DA_NOICCPKCERT),DA_ICCDATAMISSING);
+        return rERR(DA_ICCDATAMISSING);
     }
     if ((cert._pk_exponent = appdata_find(TAG_9F47_ICC_PUBLIC_KEY_EXPONENT, &(cert._pk_exponent_len))) == NULL)
     {
-        return (rERR(DA_NOICCPKEXP),DA_ICCDATAMISSING);
+        return rERR(DA_ICCDATAMISSING);
     }
     cert._pk_remainder = appdata_find(TAG_9F48_ICC_PUBLIC_KEY_REMAINDER, &(cert._pk_remainder_len)); /* optional */
     cert._pan = appdata_find(TAG_005A_APPLICATION_PAN, &(cert._pan_len)); /* PAN must be existing from readrec.c */
@@ -668,11 +676,11 @@ static int express_retrieve_pin_pk(EMV_PUBLICKEY *isspk, EMV_PUBLICKEY *pinpk)
     /* prepare the pin encipherment public key certificate related data objects */
     if ((cert._cert = appdata_find(TAG_9F2D_ICC_PIN_ENCIPHERMENT_PUBLIC_KEY_CERTIFICATE, &(cert._cert_len))) == NULL)
     {
-        return (rERR(DA_NOPINPKCERT),DA_ICCDATAMISSING);
+        return rERR(DA_ICCDATAMISSING);
     }
     if ((cert._pk_exponent = appdata_find(TAG_9F2E_ICC_PIN_ENCIPHERMENT_PUBLIC_KEY_EXPONENT, &(cert._pk_exponent_len))) == NULL)
     {
-        return (rERR(DA_NOPINPKEXP),DA_ICCDATAMISSING);
+        return rERR(DA_ICCDATAMISSING);
     }
     cert._pk_remainder = appdata_find(TAG_9F2F_ICC_PIN_ENCIPHERMENT_PUBLIC_KEY_REMAINDER, &(cert._pk_remainder_len)); /* optional */
     cert._pan = appdata_find(TAG_005A_APPLICATION_PAN, &(cert._pan_len)); /* PAN must be existing from readrec.c */
@@ -694,7 +702,7 @@ static int express_verify_ssad(EMV_PUBLICKEY* isspk)
     if (!(ptmp = appdata_find(TAG_0093_SIGNED_STATIC_APPLICATION_DATA, &ilen)))
     {
         tvr_set(ICC_DATA_MISSING);
-        return (rERR(DA_NOSSAD),DA_ICCDATAMISSING);
+        return rERR(DA_ICCDATAMISSING);
     }
 
     if (ilen != isspk->rsa.modulus_len) return rERR(DA_SSADLENERR);
@@ -783,11 +791,11 @@ static int express_verify_dynamic_signature(EMV_PUBLICKEY* iccpk)//标准动态�
     /* issue the internal authentication command */
     if ((i = emvicc_internal_authenticate(ddolv, ddolvlen, result, &ilen)) != 0x9000)
     {
-		return (rERR(DA_IAUTHERR), DA_IAUTHERR);
+		return rERR(DA_IAUTHERR);
     }
     if (emvtlv_decode(result, ilen, tlvs, sizeof(tlvs)/sizeof(tlvs[0]), SINGLE_TLVOBJ) < 0)
     {
-		return (rERR(DA_IAUTHRSPERR), DA_IAUTHERR);
+		return rERR(DA_IAUTHERR);
     }
 
 
@@ -795,7 +803,7 @@ static int express_verify_dynamic_signature(EMV_PUBLICKEY* iccpk)//标准动态�
     {
         if (tlvs[1].valuelen == 0)
         {
-            return (rERR(DA_IAUTHRSP80LENERR), DA_IAUTHERR);
+            return rERR(DA_IAUTHERR);
         }
         i = 1;
     }
@@ -803,16 +811,16 @@ static int express_verify_dynamic_signature(EMV_PUBLICKEY* iccpk)//标准动态�
     {
         if ((i = emvtlv_get(1, TAG_9F4B_SIGNED_DYNAMIC_APPLICATION_DATA, tlvs, SEARCH_ONLY_SON)) == 0)
         {
-            return (rERR(DA_IAUTHRSP77NOSDAD),DA_IAUTHERR);
+            return rERR(DA_IAUTHERR);
         }
         if (tlvs[i].valuelen == 0)
         {
-            return (rERR(DA_IAUTHRSP77SDADERR),DA_IAUTHERR);
+            return rERR(DA_IAUTHERR);
         }
     }
     else
     {
-        return (rERR(DA_IAUTHRSPUNEXPECTTAG),DA_IAUTHERR);
+        return rERR(DA_IAUTHERR);
     }
 
     ptmp = tlvs[i].pvalue; /* the signed dynamic application data */

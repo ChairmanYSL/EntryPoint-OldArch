@@ -1,7 +1,7 @@
 /**
 ************************************************************************************************************************
 * @file     express_complete.c
-* @brief    Expresspay 内核：交易收尾（1st/2nd GAC 收尾、脚本、Outcome）
+* @brief    Expresspay 内核：交易收尾（1st GENERATE AC 收尾 / Outcome（2nd GAC、脚本、DDX 均不支持））
 *
 * 移植来源：美运 V4.2.3 submodule/emvco/src/emv_complete.c（逐行移植，只改符号前缀与共享服务调用）
 * 符号约定：全部非 static 入口改名为 express_*（避免与 libentrypoint.a 的 180 个同名全局符号冲突）；
@@ -233,9 +233,9 @@ int express_complete(void)
 			{
 				trans_result = EMV_DENIALED_ONLINE;
 			}
-			else if(!emv_memcmp(auth_code, "01", 2) || !emv_memcmp(auth_code, "02", 2))	//Issuer referral
+			else if(!emv_memcmp(auth_code, "01", 2) || !emv_memcmp(auth_code, "02", 2))	// v4.2 Table 21-25 p99: 16 类之外的 ARC 一律拒绝（无 Issuer Referral）
 			{
-				return rNXT(EMV_REQ_ISSUER_REFERRAL);
+				trans_result = EMV_DENIALED_OFFLINE;
 			}
 			else if(!emv_memcmp(auth_code, "13", 2))	//Request Online PIN if supported, try another interface otherwise
 			{
@@ -295,160 +295,13 @@ int express_complete(void)
 			trans_result = EMV_DENIALED_OFFLINE;
 		}
 	}
-	else if(g_express_cnxt->status == EMV_REQ_ISSUER_REFERRAL)
-	{
-		if(g_express_cnxt->req_issuer_referral_result)
-		{
-			trans_result = EMV_ACCEPTED_OFFLINE;
-		}
-		else
-		{
-			trans_result =EMV_DENIALED_OFFLINE;
-		}
-	}
+
+	/* Expresspay v4.2 无 Issuer Referral（Table 21-25 p99：ARC 01/02 属"其它值"→拒绝），
+	 * 因此不再有 EMV_REQ_ISSUER_REFERRAL 分支；若外部误置该状态，同样按拒绝收尾。 */
 
 	return express_send_trans_result(trans_result);
 }
 
-
-//int emv_compelte(int *msginx)
-//{
-//	u8 genac;
-//	//uint32 ec_old_balance =0, ec_new_balance = 0, amount = 0;
-//	u8 iac_default[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-//	int   iss_rest_len = 0, iss_2rest_len = 0;
-//	u8 * ptmp = NULL, auth_code[2] = {0};
-//	//u8 buf[128] = {0};
-//	int i = 0, cdaflag = 0, dlen = 0, rlen = 0;
-//	u8 iss_rest[MAX_CMD * 5] = {0};
-//	u8 cdol1val[EMV_CFG_ICC_RECV_MAXLEN] = {0};
-//	u8 gac_resp[EMV_CFG_ICC_RECV_MAXLEN] = {0};
-//
-//	u8 *u9C = appdata_find(0x9C, NULL);
-//    int nRet = 0;
-//
-//    if (g_express_cnxt->card_type == EMV_CARD_CONTACTLESS)
-//    {
-//        eTRACE("g_express_cnxt->online_result:%d", g_express_cnxt->online_result);
-//        if(g_express_cnxt->online_result>=EMV_ONLINE_SUCC_ACCEPT && g_express_cnxt->online_result<=EMV_ONLINE_SUCC_ISSREF)
-//        {
-//            if(appdata_find(TAG_ISSUER_SCRIPT_71_BASE, NULL)!=NULL || appdata_find(TAG_ISSUER_SCRIPT_72_BASE, NULL)!=NULL)
-//            {
-//                eTRACE("g_express_cnxt->status:%d", g_express_cnxt->status);
-//
-//
-//                express_script_process(1, iss_rest, &iss_rest_len);
-//                if (iss_rest_len > 0)
-//                {
-//                    appdata_save(TAG_DF31_ISSUER_SCRIPT_RESULTS, iss_rest, iss_rest_len, UNIQUE);
-//                }
-//            }
-//        }
-//        if (g_express_cnxt->online_result == EMV_ONLINE_SUCC_ACCEPT)
-//            return rEND(EMV_ACCEPTED_ONLINE);
-//        else if (g_express_cnxt->online_result == EMV_ONLINE_NOT)
-//            return rEND(EMV_DENIALED_OFFLINE);
-//        else if (g_express_cnxt->online_result == EMV_ONLINE_FAIL)
-//            return rEND(EMV_DENIALED_OFFLINE);
-//        else
-//            return rEND(EMV_DENIALED_ONLINE);
-//    }
-//
-//
-//	if (g_express_cnxt->online_result == EMV_ONLINE_FAIL)
-//    {
-//		auth_code[0] = 'Z', auth_code[1] = '3', genac =  _EMV_2GAC_AAC;
-//		if (ics_option(TAA_Support_DAC_after_1GenAC) &&
-//			ics_option(TAA_Support_DAC_OnlineFail))
-//	    {
-//			if ((ptmp = appdata_find(0x9F0D, NULL)) == NULL)
-//            {
-//				ptmp = iac_default;
-//			}
-//
-//            {
-//				auth_code[0] = 'Y', auth_code[1] = '3', genac = AC_TC;
-//			}
-//		}
-//        // modify the auth code
-//		appdata_save(0x8A, auth_code, 2, OVERRIDED);
-//	}
-//    else if (g_express_cnxt->online_result == _EMV_2GAC_AAC)
-//    {
-//		genac = AC_AAC;
-//	}
-//    else    // EMV_ONLINESUCC
-//    {
-//
-//
-//		if(express_script_process(0, iss_rest, &iss_rest_len))
-//        {
-//            return CO_ERR;
-//        }
-//	}
-//
-//	ptmp = appdata_find(0x8D, &rlen); // CDOL2 always exists
-//	express_calc_tc_hash(ptmp, rlen);
-//	if ((dlen = emvdol_packet(ptmp, rlen, cdol1val, EMV_CFG_ICC_RECV_MAXLEN)) < 0)
-//    {
-//		eTRACE( "COM GACERR_CDOLPACKET");
-//		return _EMV_2GAC_AAC;
-//	}
-//	appdata_save(TAG_CDOL1_VALUE, cdol1val, dlen, UNIQUE);
-//
-//		if (genac != AC_AAC)
-//        {
-//			cdaflag = 1;
-//		}
-//
-//	if ((i = emvicc_generate_ac(genac, cdaflag, cdol1val, dlen,
-//		gac_resp, &rlen)) != 0x9000)
-//    {
-//		eTRACE( "COM GACERR_GACCMD");
-//		return CO_ERR;
-//	}
-//	if ((i = express_analyze_gac_resp(gac_resp, &rlen, cdaflag)) < 0)
-//    {
-//		eTRACE( "Canalyze_gac_resp fail com");
-//		return i;
-//	}
-//
-//	if (g_express_cnxt->online_result >= EMV_ONLINE_SUCC_ACCEPT)
-//    {
-//		nRet = express_script_process(1, iss_rest + iss_rest_len, &iss_2rest_len);
-//		iss_rest_len += iss_2rest_len;
-//
-//	}
-//
-//	if (iss_rest_len > 0)
-//    {
-//		appdata_save(0xDF31, iss_rest, iss_rest_len, UNIQUE);
-//	}
-//
-//	ptmp = appdata_find(0x9F27, NULL);
-//
-//	if (express_cid_msg(*ptmp) < 0)
-//    {
-//		eTRACE( "COM EMV_TERMINATE");
-//		return EMV_TERMINATE;
-//	}
-//	if ( !Resp_TC(*ptmp) )
-//    {
-//        eTRACE( "EMV_DENIAL");
-//		return EMV_DENIALED_OFFLINE;
-//	}
-//
-//	if (cdaflag)
-//    {
-//		tsi_set(OFFLINE_DA_PERFORMED);
-//		if (express_process_cda(1, gac_resp, rlen) < 0)
-//        {
-//			tvr_set(CDA_FAILED);
-//			return EMV_DENIALED_OFFLINE;
-//		}
-//	}
-//	return EMV_ACCEPTED_OFFLINE;
-//}
 
 /*
 ************************************************************************************************************************

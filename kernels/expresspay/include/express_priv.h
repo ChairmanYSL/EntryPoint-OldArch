@@ -6,7 +6,7 @@
 * 作用（详见 doc/AMEX_PORT_PLAN.md §3/§5/§6）：
 *   1. 把 Entrypoint 的公共服务头（emvi.h → emv.h / emv_type.h / emv_tag.h / emv_ics.h /
 *      emv_utils.h / emvoutcome.h）与本内核的 5 个公共头一次拉齐；
-*   2. 提供"美运源码 → Entrypoint 服务"的兼容垫片：状态码别名、交易类型常量、AIP/TTQ/TVR/TSI
+*   2. 提供"美运源码 → Entrypoint 服务"的兼容垫片：状态码别名、交易类型常量、AIP/TVR/TSI
 *      位访问宏（Entrypoint 上下文没有内核私有字段）、SDK_EXPRESS_DRL 类型别名、内核私有 helper；
 *   3. 声明内核全部阶段函数（express_*），供 9 个 L2 模块互相调用（不做隐式声明）。
 *
@@ -60,13 +60,6 @@ typedef EXPRESS_DRL_PARAMS SDK_EXPRESS_DRL_PARAMS; /* emvi.h:120-124 */
 #define EMV_STA_SELECT_NEXT         EMV_REQ_SELECT_NEXT     /* 26（同名同值） */
 #endif
 
-#ifndef EMV_MODE
-#define EMV_MODE                    1                       /* 美运 emvi.h:95 EMV 模式（msdoremv） */
-#endif
-#ifndef MSD_MODE
-#define MSD_MODE                    0                       /* 美运 emvi.h:94 MSD 模式 */
-#endif
-
 /* ---------------------------------------------------------------------------
  * 3b) 美运错误码（Entrypoint emv_type.h 的同一错误基值下未定义的项）
  *     IA_ERR=-1200 / RD_ERR=-1300 / DA_ERR=-1400（数值来自美运 emv_type.h:123/125/138/202）
@@ -76,9 +69,6 @@ typedef EXPRESS_DRL_PARAMS SDK_EXPRESS_DRL_PARAMS; /* emvi.h:120-124 */
 #endif
 #ifndef IA_RECORDNUMINVALID
 #define IA_RECORDNUMINVALID         (IA_ERR - 29)
-#endif
-#ifndef RD_MSD_ATC_LENERR
-#define RD_MSD_ATC_LENERR           (RD_ERR - 11)
 #endif
 #ifndef DA_IPKCERTNOPAN
 #define DA_IPKCERTNOPAN             (DA_ERR - 62)
@@ -122,13 +112,9 @@ typedef EXPRESS_DRL_PARAMS SDK_EXPRESS_DRL_PARAMS; /* emvi.h:120-124 */
 #undef  ics_option
 #undef  tc_option
 #undef  atc_option
-#undef  ttq_get
-#undef  ttq_set
 #define ics_option(nr)              BIT_GET((nr), g_express_cnxt->term.ics)
 #define tc_option(nr)               BIT_GET((nr), g_express_cnxt->term.term_caps)
 #define atc_option(nr)              BIT_GET((nr), g_express_cnxt->term.term_add_caps)
-#define ttq_get(nr)                 BIT_GET((nr), g_express_cnxt->ttq)
-#define ttq_set(nr)                 BIT_SET((nr), g_express_cnxt->ttq)
 
 /* 终端类型判定（美运 emvi.h:258-265） */
 #define TT_ATTENDED()               ((g_express_cnxt->term.term_type & 0x0F) < 4)
@@ -138,14 +124,14 @@ typedef EXPRESS_DRL_PARAMS SDK_EXPRESS_DRL_PARAMS; /* emvi.h:120-124 */
 #define TT_OFFLINE_ONLY()           (((g_express_cnxt->term.term_type & 0x0F) == 0x03) || \
                                      ((g_express_cnxt->term.term_type & 0x0F) == 0x06))
 
-/* AIP 位（美运 emvi.h:278-285；移植后用上下文里的 2 字节副本，避免悬垂指针 P1-6） */
+/* AIP 位（美运 emvi.h:278-285；移植后用上下文里的 2 字节副本，避免悬垂指针 P1-6）
+ * 注意：AIP b2b8 在 v4.2 是 "EMV mode supported"（Table 21-11 p92），不再有 MSD 位。 */
 #define AIP_SDA_SUPPORT()           (g_express_cnxt->aip[0] & 0x40)
 #define AIP_DDA_SUPPORT()           (g_express_cnxt->aip[0] & 0x20)
 #define AIP_CV_SUPPORT()            (g_express_cnxt->aip[0] & 0x10)
 #define AIP_TRM_SUPPORT()           (g_express_cnxt->aip[0] & 0x08)
 #define AIP_IA_SUPPORT()            (g_express_cnxt->aip[0] & 0x04)
 #define AIP_CDA_SUPPORT()           (g_express_cnxt->aip[0] & 0x01)
-#define AIP_MSD_SUPPORT()           (g_express_cnxt->aip[1] & 0x80)
 #define AIP_MOB_SUPPORT()           (g_express_cnxt->aip[1] & 0x40)
 
 /* TVR/TSI：写穿透（同时更新 appdata 与上下文副本） */
@@ -203,9 +189,7 @@ int  express_processing_restrictions(void);         /* express_processing_restri
 int  express_is_a_atm(void);
 void express_get_dynamic_reader_limit(SDK_EXPRESS_DRL_PARAMS *drl_params);
 int  express_again_drl_preprocess(SDK_EXPRESS_DRL *drl);
-unsigned char express_set_ttq(void);
-int  express_check_data_miss_msd(void);
-unsigned char express_process_restrict(void);
+unsigned char express_set_cvm_required(void);
 
 int  express_cardholder_verify(void);               /* express_cardholder_verification.c */
 int  express_process_online_pin(void);

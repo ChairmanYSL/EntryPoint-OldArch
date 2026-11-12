@@ -36,8 +36,6 @@ static void express_reset_transaction(void)
     ctx->card_types_allowed = EMV_CARD_UNKNOWN;
     ctx->card_type = EMV_CARD_UNKNOWN;
 
-    emv_memcpy(ctx->ttq, ctx->term.ttq, 4);
-
     ctx->trans_type = _EMV_TRANSTYPE_UNKNOWN;
     ctx->trans_amount = 0;
     ctx->trans_amount_other = 0;
@@ -48,7 +46,6 @@ static void express_reset_transaction(void)
     ctx->TermEFLEF = 0;
     ctx->CVMParameter = EXPRESS_OUTCOME_CVM_NA;
 
-    ctx->msdoremv = EXPRESS_MODE_MSD;
     ctx->gExpressmobileagain = 0;
 
     ctx->da_readrec_failed = FALSE;
@@ -57,10 +54,12 @@ static void express_reset_transaction(void)
     ctx->da_cda_performed = FALSE;
     ctx->req_pk_algorithm = 0;
     ctx->bis_card_sup_onlinepin = FALSE;
+    ctx->bis_online_pin_entered = FALSE;
     ctx->bis_unable_online = FALSE;
 
     ctx->req_online_pin_result = 0;
-    ctx->req_offline_pin_result = 0;
+    /* Expresspay v4.2 禁止离线 PIN（P p23 §2.10.1）：结果槽位恒为"不支持" */
+    ctx->req_offline_pin_result = EMV_OPER_UNSUPPORTED;
     ctx->req_confirm_bypass_pin_result = 0;
     ctx->req_confirm_force_online_result = 0;
     ctx->req_issuer_referral_result = 0;
@@ -72,7 +71,6 @@ static void express_reset_transaction(void)
     emv_memset(ctx->aip, 0, sizeof(ctx->aip));
     emv_memset(ctx->tvr, 0, sizeof(ctx->tvr));
     emv_memset(ctx->tsi, 0, sizeof(ctx->tsi));
-    emv_memset(ctx->offline_pin, 0, sizeof(ctx->offline_pin));
 }
 
 /* ---------------------------------------------------------------------------
@@ -118,7 +116,7 @@ int32_t express_init(void)
  *
  * 方案 D3：美运"遍历全部 AID 的 DF20 判断是否有 AID 限额够用，全不够返回 EMV_AMOUNTOVER"
  * 由 Entrypoint 预处理（EMV_PreProcess → preprocess_result[i].contactless_app_not_allowed）取代，
- * 内核不再重复实现，避免两套金额超限判定不一致。本函数只做 TTQ/卡类型准备。
+ * 内核不再重复实现，避免两套金额超限判定不一致。本函数只做 9F6D/9F6E 终端能力门禁。
  * ------------------------------------------------------------------------- */
 int32_t express_preprocess(uint8_t b_online)
 {
@@ -130,9 +128,6 @@ int32_t express_preprocess(uint8_t b_online)
     {
         return rERR(EMV_NONIDLE);
     }
-
-    /* TTQ 运行期副本（Expresspay v4.2 不再把 9F66 发给卡；此处仅供内核决策位使用） */
-    emv_memcpy(g_express_cnxt->ttq, g_express_cnxt->term.ttq, 4);
 
     g_express_cnxt->force_online = b_online;
 
@@ -160,20 +155,22 @@ int32_t express_preprocess(uint8_t b_online)
     }
     g_express_cnxt->card_types_allowed = EMV_CARD_UNKNOWN;
 
-    if (ttq_get(BN_TTQ_SUP_PBOC))
+    /* Expresspay v4.2 终端能力门禁（替代美运 TTQ 9F66 判定）：
+     *   - 9F6D b8b7 必须为 11b（Expresspay ≥3.0 EMV；Table 21-7 p89 / p90）
+     *   - 9F6E b1b7 必须为 0（不支持 Magstripe，v4.2 已移除 Mag-stripe；p90-91）
+     *   - 9F6E b1b5 必须为 1（支持 partial online；Table 21-9 p91）
+     * 不满足 → 本终端不具备 Expresspay 非接交易能力（美运 :967-970 语义的 v4.2 等价物）。 */
+    if ((g_express_cnxt->term.cl_capability & 0xC0) != 0xC0 ||
+        (g_express_cnxt->term.enhanced_cl_capability[0] & 0x40) != 0 ||
+        (g_express_cnxt->term.enhanced_cl_capability[0] & 0x10) == 0)
     {
-        g_express_cnxt->card_types_allowed |= EMV_CARD_CONTACT;
-    }
-    if (ttq_get(BN_TTQ_SUP_QPBOC))
-    {
-        g_express_cnxt->card_types_allowed |= EMV_CARD_CONTACTLESS;
-        g_express_cnxt->card_type = EMV_CARD_CONTACTLESS;
-    }
-    else
-    {
-        /* 非接 QPBOC 能力位关闭：AMEX 内核无法处理该终端（美运 :967-970） */
+        eTRACE("AMEX-error: terminal 9F6D/9F6E not Expresspay v4.2 capable");
         return rERR(EMV_QPBOCUNSUPPORTED);
     }
+
+    /* Expresspay 内核只处理非接交易（接触走 AEIPS 内核） */
+    g_express_cnxt->card_types_allowed = EMV_CARD_CONTACTLESS;
+    g_express_cnxt->card_type = EMV_CARD_CONTACTLESS;
 
     return EMV_OK;
 }
@@ -259,11 +256,17 @@ int32_t express_process(void)
 
         case EMV_STA_PROCESS_RESTRICT_COMPLETED:
         case EMV_REQ_CHECK_ID:
+            ctx->status = express_cardholder_verify();
+            break;
+
+        /* Expresspay v4.2 不支持离线 PIN（P p23 §2.10.1 "must not process Offline PIN"；
+         * Table 2-3 p23-24 无 VERIFY 命令）。这些状态在内核中永远不会被置位；
+         * 若外部误驱动到此处，显式拒绝而不是继续走 CVM 流程。 */
         case EMV_REQ_OFFLINE_PIN:
         case EMV_REQ_OFFLINE_PIN_LAST:
         case EMV_REQ_CONFIRM_BYPASS_PIN:
-            ctx->status = express_cardholder_verify();
-            break;
+            eTRACE("AMEX-error: offline PIN not supported by Expresspay v4.2");
+            return rERR(EMV_TERMINATE);
 
         case EMV_STA_CARDHOLDER_VERIFY_COMPLETED:
         case EMV_REQ_CONFIRM_FORCE_ONLINE:
@@ -342,24 +345,16 @@ void express_post_result(int32_t kind, int32_t result, const uint8_t *data, int3
             break;
 
         case EXPRESS_RESULT_OFFLINE_PIN:
-            ctx->req_offline_pin_result = result;
-            if (result == EMV_OPER_OK)
-            {
-                ctx->offline_pin[0] = '\0';
-                if (data != NULL && len >= 4 && len <= 12)
-                {
-                    emv_memcpy(ctx->offline_pin, data, len);
-                    ctx->offline_pin[len] = '\0';
-                }
-                else
-                {
-                    ctx->req_offline_pin_result = EMV_OPER_UNSUPPORTED;
-                }
-            }
+            /* Expresspay v4.2 禁止离线 PIN（P p23 §2.10.1）：无论 App 回传什么，
+             * 内核都不接受离线 PIN 结果，恒置 EMV_OPER_UNSUPPORTED 并记录。 */
+            eTRACE("AMEX-warning: offline PIN result rejected (not supported by Expresspay v4.2)");
+            ctx->req_offline_pin_result = EMV_OPER_UNSUPPORTED;
             break;
 
         case EXPRESS_RESULT_BYPASS_PIN:
-            ctx->req_confirm_bypass_pin_result = result;
+            /* 离线 PIN 旁路同样不属于 v4.2 流程，仅记录不参与判定 */
+            eTRACE("AMEX-warning: offline PIN bypass ignored (not supported by Expresspay v4.2)");
+            ctx->req_confirm_bypass_pin_result = EMV_OPER_UNSUPPORTED;
             break;
 
         case EXPRESS_RESULT_FORCE_ONLINE:
@@ -367,41 +362,15 @@ void express_post_result(int32_t kind, int32_t result, const uint8_t *data, int3
             break;
 
         case EXPRESS_RESULT_ONLINE:
-        {
-            /* 美运 emv.c:1365-1398：授权响应 55 域，71/72 模板改存 DF8100/DF8200 */
-            EMV_TLVOBJ tlvs[64];
-            int32_t i;
-            const uint32_t tag1 = TAG_ISSUER_SCRIPT_71_BASE;
-            const uint32_t tag2 = TAG_ISSUER_SCRIPT_72_BASE;
-
+            /* 只记录授权结果（ARC 8A 由 App/EP 写入 appdata）。
+             * Expresspay v4.2 不支持发卡行脚本 71/72（P p76 §16 "Not supported in this specification"），
+             * 因此**不在内核**重标记/保存 DF8100/DF8200；脚本由 Entrypoint 以自己的私有 tag 保存。 */
             ctx->online_result = result;
-
-            if ((result == EMV_ONLINE_SUCC_ACCEPT || result == EMV_ONLINE_SUCC_ISSREF ||
-                 result == EMV_ONLINE_SUCC_DENIAL) &&
-                data != NULL && len > 0)
-            {
-                emv_memset(tlvs, 0, sizeof(tlvs));
-                if (emvtlv_decode((uint8_t *)data, len, tlvs,
-                                  (int32_t)(sizeof(tlvs) / sizeof(tlvs[0])), DECODE_LEVEL1) == 0)
-                {
-                    for (i = 1; i <= tlvs[0].childnum; i++)
-                    {
-                        if (tlvs[i].tagname == TAG_0071_ISSUER_SCRIPT_TEMPLATE_1)
-                        {
-                            tlvs[i].tagname = tag1;
-                        }
-                        else if (tlvs[i].tagname == TAG_0072_ISSUER_SCRIPT_TEMPLATE_2)
-                        {
-                            tlvs[i].tagname = tag2;
-                        }
-                        (void)express_appdata_save2(tlvs + i, OVERRIDED);
-                    }
-                }
-            }
             break;
-        }
 
         case EXPRESS_RESULT_ISSUER_REFERRAL:
+            /* Expresspay v4.2 无 Issuer Referral（Table 21-25 p99：ARC 01/02 按"其它值"拒绝）。
+             * 保留字段仅为 API 兼容；判定不使用该结果。 */
             ctx->req_issuer_referral_result = result;
             break;
 

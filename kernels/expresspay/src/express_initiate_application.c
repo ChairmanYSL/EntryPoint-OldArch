@@ -122,7 +122,8 @@ int express_pdol_process(u8 *apdu_send, int *send_len, u8 term_type)
 	int pdol_len, dol_value_len;
 	int temp_len;
 	u8 dol_value[EMV_CFG_ICC_RECV_MAXLEN] = {0};
-	bool check_flag = FALSE;
+	u8 term_type_origin = term_type;
+	bool term_type_modified = FALSE;
 
 	if(apdu_send == NULL || send_len == NULL)
 	{
@@ -136,21 +137,39 @@ int express_pdol_process(u8 *apdu_send, int *send_len, u8 term_type)
 		{
 			eTRACE("AMEX-info: PDOL dont return 9F6E when return 9F35");
 
-			check_flag = TRUE;
-
 			if ((ptr = appdata_find(TAG_ClessReaderCapab, &temp_len)) != NULL)
 			{
 				eTRACE("AMEX-info: return Terminal Type -Modified instead of 9F35");
 				term_type |= ptr[0];
+				term_type_modified = TRUE;
 				//for authenticate ,use self-define tag to save modified term type
 				appdata_save(TAG_FF8178_TERM_TYPE_MODIFY, &term_type, 1, OVERRIDED);
-				//for financial ,use origin tag
+				/* 仅为本次 GPO 组包临时写入 Modified 值；组包后立即恢复原始 9F35（P p34：
+				 * "the modified value shall only be used for this transaction"，
+				 * 授权/请款报文必须用未修改的 9F35）。 */
 				appdata_save(TAG_9F35_TERMINAL_TYPE, &term_type, 1, OVERRIDED);
+			}
+		}
+
+		if (term_type_modified)
+		{
+			/* appdata_save 可能搬移缓冲区，重新获取 PDOL 指针后再组包 */
+			pdol = appdata_find(TAG_9F38_PDOL, &pdol_len);
+			if (pdol == NULL)
+			{
+				appdata_save(TAG_9F35_TERMINAL_TYPE, &term_type_origin, 1, OVERRIDED);
+				return rERR(IA_PDOLPACKERR);
 			}
 		}
 
 		dol_value_len = express_pdol_packet(pdol, pdol_len, dol_value, EMV_CFG_ICC_RECV_MAXLEN);
 		eTRACE("AMEX-info: Pack PDOL len = %d", dol_value_len);
+
+		if (term_type_modified)
+		{
+			/* appdata_save 可能搬移缓冲区：恢复原始 9F35 前无需再用 pdol */
+			appdata_save(TAG_9F35_TERMINAL_TYPE, &term_type_origin, 1, OVERRIDED);
+		}
 
 		if (dol_value_len < 0)
 		{
@@ -254,65 +273,45 @@ int express_parse_gpo_resp(u8 *resp, int resp_len)
 
 int express_deal_gpo_resp()
 {
-	int ret;
     u8 * mobile_cvm = NULL;
-	u8 * EnhancedClessReaderCapab;
+	u8 * EnhancedClessReaderCapab = NULL;
 	u8 tagv = 0;
     express_aip_refresh();
 	mobile_cvm = appdata_find(TAG_9F71_MB_CVMResult, NULL);
-	EnhancedClessReaderCapab = appdata_find(TAG_EnhancedClessReaderCapab, NULL);
 
-	if(AIP_MOB_SUPPORT()&&(mobile_cvm !=NULL))  // Mobile
+	/* 9F71 只在 Mobile 交易（AIP b2b7=1）时有效；Card 交易必须忽略 9F71（P p35 §4.3.3） */
+	if(AIP_MOB_SUPPORT()&&(mobile_cvm !=NULL))
     {
-        if(mobile_cvm[2] == 0x03)   //20170508
+        if(mobile_cvm[2] == 0x03)   // Mobile CVM Blocked
         {
             tvr_set(PIN_TRY_LIMIT_EXCEEDED);
         }
     }
 
-	if((EnhancedClessReaderCapab[0]&0x40)&&((EnhancedClessReaderCapab[0]&0x10)))//terminal support emv and msd
+	/* Expresspay v4.2 只支持 EMV 模式（Mag-stripe/MSD 已在 v4.2 删除，P p10 版本历史）。
+	 * AIP b2b8=1 = 卡支持 EMV 模式（Table 21-11 p92）；b2b8=0 时按 P p35 §4.3.3 分流：
+	 *   终端不支持 Magstripe(b1b7=0) + 支持 AEIPS(b1b8=1) + 卡非 Mobile(b2b7=b2b6=0)
+	 *     → §17.2.2 Try Another Interface；否则 → §17.2.4 Request Another Payment。 */
+	if((g_express_cnxt->aip[1] & 0x80) == 0)
 	{
-		if(AIP_MSD_SUPPORT()) //card support emv and msd
+		EnhancedClessReaderCapab = appdata_find(TAG_EnhancedClessReaderCapab, NULL);
+		if((EnhancedClessReaderCapab != NULL) &&
+		   ((EnhancedClessReaderCapab[0] & 0x40) == 0) &&
+		   ((EnhancedClessReaderCapab[0] & 0x80) != 0) &&
+		   ((g_express_cnxt->aip[1] & 0x40) == 0) &&
+		   ((g_express_cnxt->aip[1] & 0x20) == 0))
 		{
-			g_express_cnxt->msdoremv= EMV_MODE;
-			tagv = 0x07;
-			appdata_save(TAG_9F39_POS_ENTRY_MODE,&tagv,1,UNIQUE);
+			eTRACE("AMEX-info: card has no EMV mode, try another interface");
+			return express_outcome_try_another_interface();
 		}
-		else //card support msd only
-		{
-			g_express_cnxt->msdoremv = MSD_MODE;
-			tagv = 0x91;
-			appdata_save(TAG_9F39_POS_ENTRY_MODE,&tagv,1,UNIQUE);
-		}
-	}
-	else if((EnhancedClessReaderCapab[0]&0x40)==0 &&((EnhancedClessReaderCapab[0]&0x10)))//terminal support emv only
-	{
-		if(AIP_MSD_SUPPORT()) //card support emv and msd
-		{
-			g_express_cnxt->msdoremv = EMV_MODE;
-			tagv = 0x07;
-			appdata_save(TAG_9F39_POS_ENTRY_MODE, &tagv, 1, UNIQUE);
-		}
-		else //card support msd only
-		{
-			//not an Expresspay Mobile transaction
-			if(((EnhancedClessReaderCapab[0]&0x80)==0x80) && (!AIP_MOB_SUPPORT()))
-			{
-				return express_outcome_try_another_interface();
-				return EMV_SW_INTERFACE;
-			}
-			else// another card
-			{
-				return express_outcome_request_another_payment();
-				return IA_OTHERCARD;
-			}
-		}
-	}
-    else
-    {
+
+		eTRACE("AMEX-info: card has no EMV mode, request another payment");
 		return express_outcome_request_another_payment();
-        return rERR(EMV_TERMINATE);
-    }
+	}
+
+	/* POS Entry Mode：非接 EMV（MSD 的 0x91 分支已随 v4.2 删除） */
+	tagv = 0x07;
+	appdata_save(TAG_9F39_POS_ENTRY_MODE,&tagv,1,UNIQUE);
 
 	return EMV_OK;
 }
@@ -399,130 +398,6 @@ int express_initiate_application(void)
 		}
 	}
 
-
-	//pdol process
-//	if ((pdol = appdata_find(TAG_9F38_PDOL, &dollen)) != NULL)
-//	{
-//		if (emvdol_tag_exists(TAG_9F35_TERMINAL_TYPE, pdol, dollen) && !emvdol_tag_exists(TAG_EnhancedClessReaderCapab, pdol, dollen))
-//		{
-//			eTRACE("AMEX-info: PDOL dont return 9F6E when return 9F35");
-//			if (ptr = appdata_find(TAG_ClessReaderCapab, &len))
-//			{
-//				eTRACE("AMEX-info: return Terminal Type -Modified instead of 9F35");
-//				(*term_type) |= ptr[0];
-//				appdata_save(TAG_9F35_TERMINAL_TYPE, term_type, 1, OVERRIDED);
-//			}
-//		}
-//		if ((dolvallen = emvdol_packet(pdol, dollen, dolvalue + 3, EMV_CFG_ICC_RECV_MAXLEN)) < 0)
-//		{
-//			return rERR(IA_PDOLPACKERR);
-//		}
-//
-//		appdata_save(TAG_PDOL_VALUE, dolvalue + 3, dolvallen, UNIQUE);
-//		*(dolvalue + 2) = (u8)dolvallen;
-//
-//		if (dolvallen >= 128)
-//		{
-//			// for BER-TLV, a tag with data length more than 127 should be decoded with
-//			// two bytes for length field
-//			pdol = dolvalue;
-//			*(pdol + 1) = 0x81;
-//			dollen = dolvallen + 3;
-//		}
-//		else
-//		{
-//			pdol = dolvalue + 1;
-//			dollen = dolvallen + 2;
-//		}
-//		*pdol = (u8)TAG_0083_COMMAND_TEMPLATE;
-//	}
-//	else
-//	{
-//		pdol = dolvalue;
-//		*pdol = (u8)TAG_0083_COMMAND_TEMPLATE;
-//		*(pdol + 1) = 0x00;
-//		dollen = 2;
-//	}
-
-	// issue a gpo command
-//	sw = emvicc_get_processing_options(pdol, dollen, gpo_resp, &dolvallen);
-//	appdata_save(0x9f35, &g_express_cnxt->term.term_type, 1, OVERRIDED);
-
-//	if (ret != 0x9000)
-//    {
-//        eTRACE( "emvicc_get_process_options return [%04X]", ret);
-//		if (ret == 0x6985)
-//        {
-//			// if ICC returns 6985, we should resume application selection
-//			return IA_GPOSW6985;
-//		}
-//        else
-//        {
-//			return IA_ERR;
-//		}
-//	}
-
-
-	//deal gpo
-//    g_express_cnxt->aip = appdata_find(TAG_0082_AIP, NULL);
-//	if(g_express_cnxt->aip == NULL)
-//	{
-//		return IA_GPORSP77NOAIP;
-//	}
-//	mobile_cvm = appdata_find(0x9f71, NULL);
-//	EnhancedClessReaderCapab = appdata_find(0x9f6e, NULL);
-//
-//	if(AIP_MOB_SUPPORT()&&(mobile_cvm !=NULL))  // Mobile
-//    {
-//        if(mobile_cvm[2] == 0x03)   //20170508
-//        {
-//            tvr_set(PIN_TRY_LIMIT_EXCEEDED);
-//        }
-//    }
-//
-//	if((EnhancedClessReaderCapab[0]&0x40)&&((EnhancedClessReaderCapab[0]&0x10)))//terminal support emv and msd
-//	{
-//		if(AIP_MSD_SUPPORT()) //card support emv and msd
-//		{
-//			g_express_cnxt->msdoremv= EMV_MODE;
-//			tagv = 0x07;
-//			appdata_save(0x9f39,&tagv,1,UNIQUE);
-//		}
-//		else //card support msd only
-//		{
-//			g_express_cnxt->msdoremv = MSD_MODE;
-//			tagv = 0x91;
-//			appdata_save(0x9f39,&tagv,1,UNIQUE);
-//		}
-//	}
-//	else if((EnhancedClessReaderCapab[0]&0x40)==0 &&((EnhancedClessReaderCapab[0]&0x10)))//terminal support emv only
-//	{
-//		if(AIP_MSD_SUPPORT()) //card support emv and msd
-//		{
-//			g_express_cnxt->msdoremv = EMV_MODE;
-//			tagv = 0x07;
-//			appdata_save(0x9f39,&tagv,1,UNIQUE);
-//		}
-//		else //card support msd only
-//		{
-//			//not an Expresspay Mobile transaction
-//			if(((EnhancedClessReaderCapab[0]&0x80)==0x80) && (!AIP_MOB_SUPPORT()))
-//			{
-//				return express_outcome_try_another_interface();
-//				return EMV_SW_INTERFACE;
-//			}
-//			else// another card
-//			{
-//				return express_outcome_request_another_payment();
-//				return IA_OTHERCARD;
-//			}
-//		}
-//	}
-//    else
-//    {
-//		return express_outcome_request_another_payment();
-//        return rERR(EMV_TERMINATE);
-//    }
 
 	return rNXT(EMV_STA_APP_INITIALIZED);
 }

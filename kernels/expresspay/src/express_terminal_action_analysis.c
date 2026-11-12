@@ -147,7 +147,6 @@ static u8 express_check_tvr(u8 * auth_code)
 //	u8 iac_denial_def[] = {0x00, 0x00, 0x00, 0x00, 0x00}; // default value
 	u8 *trans_type = NULL,*iac_denial,*iac_default,*iac_online,*term_type;
     u8 *tac_denail,*tac_default,*tac_online;
-	bool match_iac = FALSE, match_tac = FALSE;
 
 	if (auth_code == NULL)
     {
@@ -261,19 +260,12 @@ static u8 express_check_tvr(u8 * auth_code)
             if((g_tvr[i] & iac_default[i])!=0)
 			{
                 return AC_AAC;
-				match_iac = TRUE;
 			}
             if((g_tvr[i] & tac_default[i])!=0)
 			{
                 return AC_AAC;
-				match_tac = TRUE;
 			}
         }
-
-//		if(match_iac == TRUE || match_tac == TRUE)
-//		{
-//			if()
-//		}
 
 		eTRACE("AMEX-info: IAC-Default dose not match with TVR");
 		return AC_TC;
@@ -883,13 +875,20 @@ int express_action_analyse()
     gac_type = express_check_tvr(auth_code);
 	eTRACE("AMEX-info: gac_type = %02x",gac_type);
 
+	/* Online PIN 交易必须联机（P p49 §8.2.3.1）；TAA 若得到 TC，强制改为 ARQC。 */
+	if(g_express_cnxt->bis_online_pin_entered && (gac_type == AC_TC))
+	{
+		eTRACE("AMEX-info: Online PIN entered -> force ARQC");
+		gac_type = AC_ARQC;
+	}
+
 	if(gac_type == AC_AAC)
 	{
-		appdata_save(TAG_008A_ARC, "Z1", 2, OVERRIDED);
+		appdata_save(TAG_008A_ARC, (u8 *)"Z1", 2, OVERRIDED);
 	}
 	else if(gac_type == AC_TC)
 	{
-		appdata_save(TAG_008A_ARC, "Y1", 2, OVERRIDED);
+		appdata_save(TAG_008A_ARC, (u8 *)"Y1", 2, OVERRIDED);
 	}
 
     if (g_express_cnxt->da_cda_performed == TRUE)
@@ -956,371 +955,6 @@ int express_action_analyse()
 
 	return rNXT(EMV_STA_ACTION_ANALYSE_COMPLETED);
 }
-
-
-
-//int emv_action_analyse(void)
-//{
-//	u8 genactype;
-//	u8 authcode[2+1] = {0};
-//	u8 buf[128] = {0};
-//    int   cdol1vlen = 0, len = 0, tmplen = 0, cdaflag = 0, ret = 0, i = 0;
-//	u8 * ptmp = NULL;
-//	u8 * pcid = NULL;
-//    u8 * pdata = NULL;
-//    u8  advice_indicator = 0;
-//    unsigned char CardInfAndPayCapab[2],EnhancedClessReaderCapab[4];
-//	u8 * pdata_CardInfAndPayCapab = NULL,*pdata_EnhancedClessReaderCapab= NULL;
-//	u8 * pATC = NULL;
-//	int gret = 0;
-//	u8 cdol1val[EMV_CFG_ICC_RECV_MAXLEN] = {0};
-//	u8 gac_resp[EMV_CFG_ICC_RECV_MAXLEN] = {0};
-//	int gac_resp_no9F4B_len;
-//
-//    emv_memset(CardInfAndPayCapab,0,sizeof(CardInfAndPayCapab));
-//	pdata_CardInfAndPayCapab = appdata_find(TAG_9F70_CARD_INTERFACEANDPAYMENT_CAP,&len);
-//
-//	if((pdata_CardInfAndPayCapab !=NULL) && (len >0))
-//	{
-//		emv_memcpy(CardInfAndPayCapab,pdata_CardInfAndPayCapab,len);
-//	}
-//
-//    emv_memset(EnhancedClessReaderCapab,0,sizeof(EnhancedClessReaderCapab));
-//	pdata_EnhancedClessReaderCapab = appdata_find(TAG_EnhancedClessReaderCapab,&len);
-//
-//	if((pdata_EnhancedClessReaderCapab !=NULL) && (len >0))
-//	{
-//		emv_memcpy(EnhancedClessReaderCapab,pdata_EnhancedClessReaderCapab,len);
-//	}
-//
-//	eTRACE("emv_action_analyse-------->");
-//    ptmp = appdata_find(0x8C, &len);
-//
-//    if(NULL == ptmp || len <= 0)	//if CDOL1 miss,trans terminate
-//    {
-//		return EMV_ENDAPPLICATION;
-//	}
-//
-//	//CDOL Process
-//	cdol1vlen = emvdol_packet(ptmp, len, cdol1val, EMV_CFG_ICC_RECV_MAXLEN);
-//	if (cdol1vlen < 0)
-//    {
-//		gret = AA_CDOLPACKERR;
-//        goto __call_return;
-//	}
-//
-////	express_calc_tc_hash(ptmp, len);
-//
-//    genactype = express_check_tvr(authcode);
-//	eTRACE("genactype = %x",genactype);
-//
-//	if (genactype != AC_ARQC)
-//    {
-//		appdata_save(0x8A, authcode, 2, UNIQUE);
-//	}
-//
-//    if (g_express_cnxt->da_cda_performed == TRUE)
-//    {
-//		// if we can detect the CDA Failure, we shuold check tvr bits,
-//		// for we performed CDA preprocessing before TAA
-//		if ((genactype == AC_AAC) || tvr_get(CDA_FAILED))
-//        {
-//			// if CDA has failed or we request an AAC,  CDA is not required again
-//            g_express_cnxt->da_cda_performed = FALSE;
-//		}
-//        else
-//        {
-//			cdaflag = 1;
-//			tsi_set(OFFLINE_DA_PERFORMED); //EMV4.2C
-//		}
-//
-//		if ((genactype == AC_AAC) && !tvr_get(CDA_FAILED))
-//        {
-//			// request an AAC, and any CDA errors not detected yet
-//			tvr_set(OFFLINE_DA_NOT_PERFORMED);
-//		}
-//	}
-//
-//	appdata_save(TAG_CDOL1_VALUE, cdol1val, cdol1vlen, UNIQUE);
-//
-//	ret = emvicc_generate_ac(genactype, cdaflag, cdol1val, cdol1vlen, gac_resp, &len);
-//
-//	if(ret == 0)
-//	{
-//		return EMV_PAYPASS_TRY_AGAIN;
-//	}
-//	else if(ret == 0x6984)
-//    {
-//        if(AIP_MOB_SUPPORT())  // Mobile
-//        {
-//            if(g_express_cnxt->gExpressmobileagain == 0)//只第一次Try Again
-//            {
-//                g_express_cnxt->gExpressmobileagain = 1;
-//                return EMV_REQ_SEEPHONE; //?????? Try Again 如何处理
-//            }
-//            else
-//            {
-//                return AA_ERR;
-//			}
-//        }
-//        if((EnhancedClessReaderCapab[0]&0x80)&& (!AIP_MOB_SUPPORT()) &&( g_express_cnxt->msdoremv == EMV_MODE)&&((CardInfAndPayCapab[0]&0x20) ||(pdata_CardInfAndPayCapab == NULL)))
-//        {
-//            return EMV_SW_INTERFACE;
-//        }
-//
-//        return AA_ERR;
-//    }
-//    else if(ret != 0x9000)
-//    {
-//        if((EnhancedClessReaderCapab[0]&0x80)&& (!AIP_MOB_SUPPORT()) && ( g_express_cnxt->msdoremv == EMV_MODE)&&((CardInfAndPayCapab[0]&0x20) ||(pdata_CardInfAndPayCapab == NULL)))
-//        {
-//            return EMV_SW_INTERFACE;
-//        }
-//        return AA_ERR;
-//    }
-//
-//	tsi_set(CARD_RISK_MANA_PERFORMED);
-//	ret = express_analyze_gac_resp(gac_resp, &len, cdaflag);
-//	if (ret < 0)
-//    {
-//        eTRACE( "express_analyze_gac_resp return [%04X]", ret);
-//		pcid = appdata_find(TAG_9F27_CRYPTOGRAM_INFO_DATA, NULL);
-//		pATC = appdata_find(TAG_9F36_ATC, NULL);
-//
-//		if((pcid == NULL)||(pATC == NULL))
-//		{
-//			if((EnhancedClessReaderCapab[0]&0x80)&& (!AIP_MOB_SUPPORT()) && (g_express_cnxt->msdoremv == EMV_MODE) && ((CardInfAndPayCapab[0]&0x20) ||(pdata_CardInfAndPayCapab == NULL)))
-//			{
-//				return EMV_SW_INTERFACE;
-//			}
-//		}
-//
-//		gret=ret;
-//        goto __call_return;
-//	}
-//	else if(EMV_DENIALED_OFFLINE == ret)
-//	{
-//		return ret;
-//	}
-//
-//	gac_resp_no9F4B_len = len;
-//	eTRACE("AMEX-info: gac resp(no 9F4B) len = %d", gac_resp_no9F4B_len);
-//
-//
-//	pcid = appdata_find(0x9F27, NULL);
-//
-//	// check the CID logic against the requested one
-//	if ((Resp_TC(*pcid) && genactype < AC_TC) ||(!Resp_AAC(*pcid) && genactype == AC_AAC))
-//    {
-//			gret = AA_ERR;
-//            goto __call_return;
-//	}
-//
-//	if (express_cid_msg(*pcid) < 0)
-//    {
-//		eTRACE( "EMV_TERMINATE");
-//		gret = EMV_TERMINATE;
-//        goto __call_return;
-//	}
-//
-//    if (Resp_Advice(*pcid))
-//    {
-//        advice_indicator = 1;
-//    }
-//
-//    appdata_save(TAG_ADVICE_INDICATOR, &advice_indicator, 1, UNIQUE);
-//
-//    if(Resp_TC(*pcid)&&(genactype&AC_TC))
-//    {
-//
-//    }
-//    else if(Resp_ARQC(*pcid)&&((genactype&AC_TC) || (genactype&AC_ARQC)))
-//    {
-//
-//    }
-//	else if (Resp_AAC(*pcid))
-//    {
-//		eTRACE( "EMV_DENIAL");
-//		appdata_save(0x8A, (u8 *)"Z1", 2, OVERRIDED);
-//		gret = EMV_DENIALED_OFFLINE;
-//        goto __call_return;
-//	}
-//	else
-//	{
-//		if(!Resp_TC(*pcid) && !Resp_AAC(*pcid) && !Resp_ARQC(*pcid) )
-//		{
-//			if((EnhancedClessReaderCapab[0]&0x80)&& (!AIP_MOB_SUPPORT()) && (g_express_cnxt->msdoremv == EMV_MODE) && ((CardInfAndPayCapab[0]&0x20) ||(pdata_CardInfAndPayCapab == NULL)))
-//			{
-//				return EMV_SW_INTERFACE;
-//			}
-//			gret = AA_ERR;
-//            goto __call_return;
-//		}
-//		else
-//		{
-//			return EMV_DENIALED_OFFLINE;
-//		}
-//	}
-//
-//    ptmp = appdata_find(TAG_9F4B_SIGNED_DYNAMIC_APPLICATION_DATA, &len);
-//	if(ptmp == NULL && len == 0)
-//	{
-//		ptmp = appdata_find(TAG_9F26_APPLICATION_CRYPTOGRAM, &len);
-//		if(ptmp == NULL && len == 0)
-//		{
-//			if((EnhancedClessReaderCapab[0]&0x80)&& (!AIP_MOB_SUPPORT()) && (g_express_cnxt->msdoremv == EMV_MODE) && ((CardInfAndPayCapab[0]&0x20) ||(pdata_CardInfAndPayCapab == NULL)))
-//			{
-//				return EMV_SW_INTERFACE;
-//			}
-//		}
-//
-//		if(Resp_AAC(*pcid)) //AAC
-//		{
-//			if(genactype == AC_AAC)
-//			{
-//				if(cdaflag)
-//				{
-//					if((EnhancedClessReaderCapab[0]&0x80)&& (!AIP_MOB_SUPPORT()) && (g_express_cnxt->msdoremv == EMV_MODE) && ((CardInfAndPayCapab[0]&0x20) ||(pdata_CardInfAndPayCapab == NULL)))
-//					{
-//						return EMV_SW_INTERFACE;
-//					}
-//				}
-//			}
-//		}
-//		else
-//		{
-//			if(cdaflag)
-//			{
-//				if((EnhancedClessReaderCapab[0]&0x80)&& (!AIP_MOB_SUPPORT()) && (g_express_cnxt->msdoremv == EMV_MODE) && ((CardInfAndPayCapab[0]&0x20) ||(pdata_CardInfAndPayCapab == NULL)))
-//				{
-//					return EMV_SW_INTERFACE;
-//				}
-//			}
-//		}
-//	}
-//
-//	// now peform the CDA veification, only for TC or ARQC
-//	if (cdaflag)
-//    {
-//        eTRACE("AMEX-info:start perfrom CDA");
-//		if ((ret = express_process_cda(0, gac_resp, gac_resp_no9F4B_len)) < 0)
-//        {
-//			tvr_set(CDA_FAILED);
-//
-//			ptmp = appdata_find(TAG_9F27_CRYPTOGRAM_INFO_DATA, &len);
-//			if(NULL == ptmp)
-//			{
-//				eTRACE("AMEX-error: GAC response dont contain CID(9F27)\r\n");
-//				return rERR(AA_GACRSP77NOCID);
-//			}
-//
-//			if(DA_NOSDAD == ret)
-//			{
-//				eTRACE("AMEX-error: GAC response has no 9F4B\r\n");
-//
-//				if(0x00 == (ptmp[0] & 0xC0))
-//				{
-//					if(AC_AAC == genactype) //Request CDA and Card return AAC
-//					{
-//						return rERR(DA_ERR);
-//					}
-//				}
-//				else
-//				{
-//					return rERR(DA_ERR);
-//				}
-//			}
-//			else if(DA_CDAHASHV2ERR == ret)
-//			{
-//				eTRACE("AMEX-error: CDA Hash verify failed\r\n");
-//				if(((0x40 == (ptmp[0] & 0xC0)) && (AC_TC == genactype)) || ((0x80 == (ptmp[0] & 0xC0)) &&(AC_ARQC == genactype || AC_TC == genactype)))	//if trans result is offline approve or online deal when CDA signature verify failed,trans should be declined
-//				{
-//					eTRACE("AMEX-info: Trans Offline Declined\r\n");
-//					return rEND(EMV_DENIALED_OFFLINE);
-//				}
-//			}
-//			else	//code by wangzhen
-//			{
-//				pcid = gac_resp;
-//				if(genactype == AC_ARQC)
-//				{
-//					appdata_save(0x8A, (u8 *)"Z1", 2, OVERRIDED);
-//				}
-//				else if(Resp_TC(*pcid))
-//				{
-//					eTRACE( "EMV_DENIAL");
-//					gret = EMV_DENIALED_OFFLINE;
-//					goto __call_return;
-//				}
-//				else
-//				{
-//					eTRACE( "EMV_2GAC_AAC");
-//					gret = _EMV_2GAC_AAC;
-//					goto __call_return;
-//				}
-//			}
-//		}
-//	}
-//
-//	if (Resp_TC(*pcid))
-//    {
-//		eTRACE( "EMV_ACCEPT");
-//		appdata_save(0x8A, (u8 *)"Y1", 2, OVERRIDED);	//FQ ADD
-//		gret = EMV_ACCEPTED_OFFLINE;
-//        goto __call_return;
-//	}
-//	else
-//	{
-//	    ret = EMVPORT_GoOnline(gac_resp, &len);
-//	    if (ret == EMV_OPER_REPORT_APP)
-//	    {
-//	        g_express_cnxt->online_result = EMV_ONLINE_NOT;
-//	        return rNXT(EMV_REQ_GO_ONLINE);
-//	    }
-//	    else
-//	    {
-//	        g_express_cnxt->online_result = ret;
-//
-//	        if (g_express_cnxt->online_result == EMV_ONLINE_SUCC_ACCEPT
-//	                || g_express_cnxt->online_result == EMV_ONLINE_SUCC_ISSREF
-//	                || g_express_cnxt->online_result == EMV_ONLINE_SUCC_DENIAL)
-//	        {
-//	            if (gac_resp > 0)
-//	            {
-//	                int i;
-//	                u32 tag1 = TAG_ISSUER_SCRIPT_71_BASE;
-//	                u32 tag2 = TAG_ISSUER_SCRIPT_72_BASE;
-//	                EMV_TLVOBJ tlvs[64];
-//
-//	                if (emvtlv_decode((u8*)gac_resp, len, tlvs, sizeof(tlvs)/sizeof(tlvs[0]), DECODE_LEVEL1) == 0)
-//	                {
-//	                    for (i = 1; i <= tlvs[0].childnum; i++)
-//	                    {
-//	                        if (tlvs[i].tagname == TAG_0071_ISSUER_SCRIPT_TEMPLATE_1)
-//	                            tlvs[i].tagname = tag1++;
-//	                        else if (tlvs[i].tagname == TAG_0072_ISSUER_SCRIPT_TEMPLATE_2)
-//	                            tlvs[i].tagname = tag2++;
-//	                        express_appdata_save2(tlvs + i, OVERRIDED);
-//	                    }
-//	                }
-//	            }
-//	        }
-//
-//	        return rNXT(EMV_STA_ACTION_ANALYSE_COMPLETED);
-//	    }
-//	}
-//
-//__call_return:
-//    eTRACE( "action_analyze ret = %02x",gret);
-//
-//	if(gret==0)
-//	{
-//	    return rNXT(EMV_STA_ACTION_ANALYSE_COMPLETED);
-//	}
-//
-//	return gret;
-//
-//}
 
 /*
 ************************************************************************************************************************

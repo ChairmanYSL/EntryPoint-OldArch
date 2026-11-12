@@ -94,10 +94,14 @@ static const u8 k_drl_invalid[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 int express_is_a_atm(void)
 {
 	u8 * pdata = appdata_find(0x9F35, NULL);
+	if (pdata == NULL)
+	{
+		return 0;
+	}
 	if (*pdata == 0x14 || *pdata == 0x15 || *pdata == 0x16)
     {
 		pdata = appdata_find(0x9F40, NULL);
-		if (*pdata&ATC_Cash)
+		if (pdata != NULL && (*pdata & ATC_Cash))
         {
 			return 1;
 		}
@@ -253,11 +257,10 @@ int express_again_drl_preprocess(SDK_EXPRESS_DRL * drl)
 	}
 	return 0;
 }
-unsigned char express_set_ttq(void)
+/* CVM Required 位：v4.2 只用 9F6D b1b4 与 9F6E b3b7 表达（P p33 §4.3.1）。
+ * 函数名不再叫 set_ttq —— Expresspay v4.2 无 TTQ(9F66)。 */
+unsigned char express_set_cvm_required(void)
 {
-    unsigned char k;
-    unsigned char tempTermTransPredicable;
-
     if(g_express_cnxt->CVMRLEF == 1)
     {
         appdata_save_or(TAG_ClessReaderCapab,0,0x08);
@@ -277,7 +280,6 @@ static int express_dynamic_reader_limit(void)
 	u8 CardInfAndPayCapab[2];
 	SDK_EXPRESS_DRL_PARAMS  drl_params;
 	int i=0,match =0;
-	int ret;
     SDK_EXPRESS_DRL stsdkExpressDrl;
 
     eTRACE("AMEX-info :Start DRL Process");
@@ -299,7 +301,7 @@ static int express_dynamic_reader_limit(void)
 				emv_memcpy(EnhancedClessReaderCapab,pdataEnhance,len);
 
 			eTRACE("\r\n user AID Reader Limits\r\n");
-			if((EnhancedClessReaderCapab[0]&0x80)&&(!AIP_MOB_SUPPORT())&&(g_express_cnxt->msdoremv == EMV_MODE)&&((CardInfAndPayCapab[0]&0x20) ||(pdataCardCap == NULL)))//for 4.1--7.2.2
+			if((EnhancedClessReaderCapab[0]&0x80)&&(!AIP_MOB_SUPPORT())&&((CardInfAndPayCapab[0]&0x20) ||(pdataCardCap == NULL)))//for 4.1--7.2.2
             {
 				return express_outcome_try_another_interface();
 				return EMV_SW_INTERFACE;
@@ -342,18 +344,18 @@ static int express_dynamic_reader_limit(void)
 
 	if(match)
 	{
-		ret = express_again_drl_preprocess(&stsdkExpressDrl);
+		(void)express_again_drl_preprocess(&stsdkExpressDrl);
     }
 	else
 	{
-		ret = express_again_drl_preprocess(&drl_params.defaultDRL);
+		(void)express_again_drl_preprocess(&drl_params.defaultDRL);
 	}
 
 	eTRACE("AMEX-info: g_express_cnxt->TermEFLEF = %d\r\n", g_express_cnxt->TermEFLEF);
 	eTRACE("AMEX-info: g_express_cnxt->CVMRLEF = %d\r\n", g_express_cnxt->CVMRLEF);
 	eTRACE("AMEX-info: g_express_cnxt->CANAI = %d\r\n", g_express_cnxt->CANAI);
 
-    express_set_ttq();
+    express_set_cvm_required();
 	emv_memset(EnhancedClessReaderCapab,0,sizeof(EnhancedClessReaderCapab));
     pdataEnhance= appdata_find(TAG_EnhancedClessReaderCapab,&len);
 	if((pdataEnhance != NULL) && (len>0))
@@ -361,7 +363,7 @@ static int express_dynamic_reader_limit(void)
 
 	if(g_express_cnxt->CANAI)
 	{
-		if((EnhancedClessReaderCapab[0]&0x80)&&(!AIP_MOB_SUPPORT())&&(g_express_cnxt->msdoremv == EMV_MODE)&&((CardInfAndPayCapab[0]&0x20) ||(pdataCardCap == NULL)))//for 4.1--7.2.2
+		if((EnhancedClessReaderCapab[0]&0x80)&&(!AIP_MOB_SUPPORT())&&((CardInfAndPayCapab[0]&0x20) ||(pdataCardCap == NULL)))//for 4.1--7.2.2
         {
 			return EMV_SW_INTERFACE;
 		}
@@ -374,55 +376,9 @@ static int express_dynamic_reader_limit(void)
 
 	return EMV_OK;
 }
-static const u32 ExpresspayMSDmandatoryTag[] =
-{
-    TAG_5F25_APPLICATION_EFFECTIVE_DATE,
-    TAG_5F20_CARDHOLDER_NAME,
-    TAG_0057_TRACK2_EQUIVALENT_DATA,
-    TAG_9F36_ATC,
-    0
-};
 
-int express_check_data_miss_msd(void)
-{
-    int i=0;
-	int len =0;
-
-    while(1)
-    {
-        if(ExpresspayMSDmandatoryTag[i] == 0)
-        {
-            break;
-        }
-
-        if(	(appdata_find(ExpresspayMSDmandatoryTag[i],&len) == NULL) && (len == 0))
-        {
-            return EMV_FAIL;
-        }
-
-        i++;
-    }
-    return EMV_OK;
-}
-
-
-unsigned char express_process_restrict(void)
-{
-	unsigned char asPAN[20] = {0};
-    int retCode;
-
-
-    if(g_express_cnxt->msdoremv == MSD_MODE) // 锟斤拷锟斤拷模式Magstripe Mode transaction
-    {
-        if(express_check_data_miss_msd()!=EMV_OK)
-        {
-			tvr_set(ICC_DATA_MISSING);
-            return EMV_FAIL;
-        }
-    }
-
-    return EMV_OK;
-}
+/* Expresspay v4.2 已删除 Mag-stripe/MSD：原 express_check_data_miss_msd()/express_process_restrict()
+ * （MSD 强制数据 5F25/5F20/57/9F36 检查）整体删除，不再保留会误导的 MSD 分支。 */
 
 int express_processing_restrictions(void)
 {

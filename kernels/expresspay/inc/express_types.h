@@ -44,13 +44,9 @@ extern "C" {
 #define EXPRESS_TRANS_EC_BALANCE      0x0B
 
 /* ---------------------------------------------------------------------------
- * 支付模式（emvi.h 中 EMV_CONTEXT.msdoremv；emv_initiate_application.c:263-278 赋值）
+ * 支付模式：Expresspay v4.2 已移除 Mag-stripe/MSD（[P p10 版本历史；P p43 §7.2.2]），
+ * 内核只有 EMV 模式，故不再保留 msdoremv 字段与 EXPRESS_MODE_* 常量。
  * ------------------------------------------------------------------------- */
-typedef enum
-{
-    EXPRESS_MODE_MSD = 0,             /* MSD 模式（磁条模式） */
-    EXPRESS_MODE_EMV = 1              /* EMV 模式 */
-} EXPRESS_MSD_OR_EMV;
 
 /* ---------------------------------------------------------------------------
  * 离线数据认证结果类型（合并原 EMV_CONTEXT.da_sda/dda/cda_performed 三个 bool）
@@ -110,10 +106,6 @@ typedef struct
                                                      emv_terminal_action_analysis.c:187；emv_complete.c:140 */
     uint8_t                     force_online;     /* emv.c:924 qpboc_force_online（0/1，来自 EMV_PreProcess(bOnline)） */
 
-    /* --- TTQ 运行期副本（emv.c:525,922；ttq_set 由内核改写） --- */
-    uint8_t                     ttq[4];
-    uint8_t                     enhancecap[4];    /* emvi.h:164 9F6E 缓存；当前内核未读写（保留位，P2-4） */
-
     /* --- Expresspay 专有交易标志（emvi.h:209-217，全部有实际读取点） --- */
     uint8_t                     CANAI;            /* Contactless App Not Allowed Indicator：
                                                      emv_application_selection.c:676 置位；
@@ -129,7 +121,6 @@ typedef struct
     uint8_t                     gExpressmobileagain;/* Mobile CVM 重试标志：
                                                      emv_cardholder_verification.c:532-536,895-897；
                                                      emv_terminal_action_analysis.c:719-721；emv.c:1145-1148 */
-    uint8_t                     msdoremv;         /* MSD/EMV 模式：emv_initiate_application.c:263,269,278 等 17 处 */
     uint8_t                     CVMParameter;     /* Outcome CVM 值：emv_cardholder_verification.c:548..800；
                                                      emvoutcome.c:214,230 */
 
@@ -140,7 +131,7 @@ typedef struct
 
     /* --- 内核状态机（与 Entrypoint 状态码同值；Entrypoint 每次 dispatch 后回读） --- */
     int32_t                     status;            /* 对应美运 g_emv_cnxt->status（emv.c:523/1168-1257） */
-    uint8_t                     card_type;         /* 对应美运 EMV_CARD_CONTACTLESS；emv_issuer_script_processing.c:139 用于 icc_rw */
+    uint8_t                     card_type;         /* 内核只处理非接交易（Expresspay v4.2），恒为 EMV_CARD_CONTACTLESS */
     uint8_t                     card_types_allowed;/* 对应美运 emv.c:925；内核 init/preprocess 内部使用 */
 
     /* --- appdata 缓存副本（替代美运的裸指针，修 P1-6 悬垂指针） ---
@@ -160,9 +151,6 @@ typedef struct
     uint8_t                     pay_mode;         /* emv.c:552 仅初始化，当前无读取（P2-6） */
     uint8_t                     ec_onlinpin_falg; /* emv.c:558 仅初始化，当前无读取（P2-6） */
     uint8_t                     cv_rule_index;    /* emvi.h:177 声明未使用（P2-6） */
-    bool                        offline_pin_unfinished; /* emvi.h:183 声明未使用（P2-6） */
-    int32_t                     offline_pin_tries;      /* emvi.h:184 声明未使用（P2-6） */
-    uint8_t                     offline_pin[13];  /* emv.c:1326-1332 */
 
     /* --- 认证状态 --- */
     bool                        da_readrec_failed;/* emv_read_application_data.c:456-461,499；
@@ -171,13 +159,16 @@ typedef struct
     uint8_t                     req_pk_algorithm; /* emv_offline_data_authentication.c:982..1352 */
     bool                        bis_card_sup_onlinepin; /* 卡支持联机 PIN：emv_cardholder_verification.c:667 置位；
                                                              emv_complete.c:226 读取 */
+    bool                        bis_online_pin_entered; /* 本笔已选 Online PIN（§8.2.3.1）→ 必须联机；
+                                                             由 express_perform_cvm 置位，express_action_analyse 强制 ARQC */
 
     /* --- 交互结果（Entrypoint EMV_Result* 转交） --- */
     int32_t                     req_sel_accounttype_result;
     int32_t                     req_check_id_result;
     int32_t                     req_online_pin_result;   /* emv_cardholder_verification.c:110,114；emv_complete.c:228,232 */
-    int32_t                     req_offline_pin_result;  /* emv.c:1324,1336 */
-    int32_t                     req_confirm_bypass_pin_result;
+    int32_t                     req_offline_pin_result;  /* Expresspay v4.2 禁止离线 PIN（P p23 §2.10.1）：
+                                                             恒为 EMV_OPER_UNSUPPORTED，仅为 API 兼容保留 */
+    int32_t                     req_confirm_bypass_pin_result; /* 离线 PIN 旁路：v4.2 不使用 */
     int32_t                     req_confirm_force_online_result;
     int32_t                     req_issuer_referral_result;/* emv_complete.c:284 */
     int32_t                     online_result;    /* emv_complete.c:200-202,267；emv.c:1379 */

@@ -115,7 +115,7 @@ int32_t EMV_KernelProcess(void);                          /* EP 内部调度 */
   1. ~~**标签口径统一**~~（已完成 2026-11-12）：Entrypoint 参数层与 Expresspay 内核双向兼容 `0x1F03/0xDF8102`（Default TDOL）与 `0x1F02/0xDFC108`（Status Check Support）。
   2. **G2** DRL getter（`emv_get_drl`）：Expresspay v4.2 已移除 DRL，可继续用 AID 级 DF19/DF20/DF21 回退；如需支持旧配置再补。
   3. ~~**G5**~~（已完成 2026-11-12）：`EMV_KERNEL_OPS.get_outcome` + `EMV_GetKernelOutcome()`，且 `outcome_final_transaction()` 在交易结束时按 Book B 11 参数组装最终 Outcome（合并内核私有 0xA0/0xB0/0xC0/0xD0；仅解释 UI Request / Field-off / Start 三项，其余透传）。
-  4. **spec v4.2 精修**：删除 MSD 分支、9F6D/9F6E 判定重写（Amex 无 TTQ）、离线 PIN 强制禁止、2nd GAC/脚本/DDX 按规范处理。
+  4. ~~**spec v4.2 精修**~~（已完成 2026-11-12）：删除 MSD/Mag-stripe；TTQ(9F66) 退出判定、改用 9F6D/9F6E（缺省 C0 / 9C E0 00 03）；离线 PIN 强制禁止（结果忽略、误驱动 → EMV_TERMINATE）；2nd GAC / 71/72 脚本 / DDX 改为规范明示不支持（脚本归 EP）；PDOL 9F35|9F6D 仅影响 GPO；规范明示不支持项见 doc/EXPRESSPAY_PORT_STATUS.md §9.6。
   5. **桩 ICC 端到端**：已完成基础链路（`scripts/test_host.ps1`，75 断言 PASS，覆盖链接/注册/选卡/恶意 SDOL/候选上限/DOL/appdata 复位）；**GPO→READ→GAC→ARQC→ARC=00 全流程**仍待补（受 ODA/CVM 桩实现限制）。
   6. Entrypoint 侧 `EMV_TERMPARAM/EMV_AIDPARAM` 第 2 步最小化（`doc/STRUCT_MINIMIZATION.md`）。
   7. IAR 工程复编（本机无 IAR）、真实测试卡/读卡器与 EMVCo TTA 认证。

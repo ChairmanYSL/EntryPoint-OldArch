@@ -99,6 +99,19 @@
 
 #define NO_CVM_PERFORMED 0x3F
 
+/* 终端是否"离线唯一"：与 pre-PDOL 使用同一份 9F35（appdata），低 3 位 011/110
+ * （Expresspay v4.2 p33 §4.3.1；Table 21-6 p89）。Online PIN 只能用于可联机终端。 */
+static bool express_term_is_offline_only(void)
+{
+    u8 *tt = appdata_find(TAG_9F35_TERMINAL_TYPE, NULL);
+
+    if (tt == NULL)
+    {
+        return FALSE;
+    }
+    return ((*tt & 0x07) == 0x03) || ((*tt & 0x07) == 0x06);
+}
+
 typedef struct{
 	unsigned char method;
 	unsigned char condition;
@@ -230,7 +243,14 @@ unsigned char express_check_if_support_cvm(unsigned char method)
 
         case 0x02: //enciphered PIN verification online
         {
+            /* 9F6E b2b7=1 表示终端支持 Online PIN（Table 21-9 p91）。
+             * Expresspay v4.2：Online PIN 必须联机（P p49 §8.2.3.1），离线唯一/当前无法联机的终端
+             * 不得把 Online PIN 放进可用方法集合。 */
             if((EnhancedClessReaderCapab[1] & 0x40) == 0)
+            {
+                return 0;
+            }
+            else if(express_term_is_offline_only() || g_express_cnxt->bis_unable_online)
             {
                 return 0;
             }
@@ -241,6 +261,8 @@ unsigned char express_check_if_support_cvm(unsigned char method)
         }
         break;
 
+        /* Expresspay v4.2 禁止离线 PIN（P p23 §2.10.1 "must not process Offline PIN"；
+         * Table 2-3 p23-24 无 VERIFY 命令；Table 21-16 p94-95 中离线 PIN 方法码不受支持）。 */
         case 0x03: //Plaintext PIN verification performed by ICC and signature(paper)
             return 0;
             break;
@@ -579,9 +601,12 @@ unsigned char express_perform_cvm(unsigned char method, unsigned char condition)
         break;
 
         case 0x02:          //enciphered PIN verification online
-            if((EnhancedClessReaderCapab[1]&0x40) !=0)
+            if((EnhancedClessReaderCapab[1]&0x40) !=0 && !express_term_is_offline_only() && !g_express_cnxt->bis_unable_online)
 			{
+				/* §8.2.3.1：Online PIN → TVR b3b3=1、CVM Results '09'、本笔必须联机。
+				 * 后者由 express_action_analyse() 依据 bis_online_pin_entered 强制 ARQC。 */
 				g_express_cnxt->CVMParameter = OUTCOME_CVM_ONLINE_PIN;
+				g_express_cnxt->bis_online_pin_entered = TRUE;
 				tvr_set(ONLINE_PIN_ENTERED);
 				return express_process_online_pin();
 			}
@@ -591,13 +616,18 @@ unsigned char express_perform_cvm(unsigned char method, unsigned char condition)
 
             break;
 
+        /* Expresspay v4.2 禁止离线 PIN（P p23 §2.10.1）：以下三种方法一律"不支持"，
+         * 由 CVM List 继续尝试下一个双方支持的方法。 */
         case 0x03:  //Plaintext PIN verification performed by ICC and signature(paper)
+            eTRACE("AMEX-info: offline PIN (plaintext ICC) rejected: not supported by Expresspay v4.2");
             return CV_NOT_SUPPORTED;
             break;
         case 0x04:  //enciphered PIN verification performed by ICC
+            eTRACE("AMEX-info: offline PIN (enciphered ICC) rejected: not supported by Expresspay v4.2");
             return CV_NOT_SUPPORTED;
             break;
         case 0x05: //enciphered PIN verification performed by ICC and signature(paper)
+            eTRACE("AMEX-info: offline PIN (enciphered ICC + signature) rejected: not supported by Expresspay v4.2");
             return CV_NOT_SUPPORTED;
             break;
         case 0x1E://signature (paper)
@@ -634,7 +664,7 @@ int express_cvm_processing(bool skip_nocvm)
 	u8 cvm_res[3]={0x3F,0x00,0x01};
 	int i,j = -1;
 	CVMSTRCUT CVMdata;
-	u8 needcvm = 0,nextcvm = 0;
+	u8 needcvm = 0;
     u8 needcvmnextcvm = 0;
 	u8 sign_indicator = 0x00;
 
@@ -697,7 +727,6 @@ int express_cvm_processing(bool skip_nocvm)
 		eTRACE("AMEX-info: express_analy_cvmlist ret = %02X", needcvmnextcvm);
 
 		needcvm = needcvmnextcvm & 0xF0;
-		nextcvm = needcvmnextcvm & 0x0F;
 
 		if(needcvm)
 		{
@@ -734,7 +763,6 @@ int express_cvm_processing(bool skip_nocvm)
 		eTRACE("AMEX-info: express_analy_cvmlist ret = %02X", needcvmnextcvm);
 
 		needcvm = needcvmnextcvm & 0xF0;
-		nextcvm = needcvmnextcvm & 0x0F;
 
 		if(needcvm)
 		{

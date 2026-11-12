@@ -14,12 +14,12 @@ $Root = Split-Path -Parent $PSScriptRoot
 $results = @()
 
 Write-Host "== 1/3 host gate ==" -ForegroundColor Cyan
-& (Join-Path $PSScriptRoot 'build.ps1') -Tag $Tag
+& (Join-Path $PSScriptRoot 'build.ps1') -Tag $Tag -WerrorAll
 $hostOk = ($LASTEXITCODE -eq 0)
 $results += "host gate          : $(if ($hostOk) { 'PASS' } else { 'FAIL' })"
 
 Write-Host "== 2/3 ndk gate ==" -ForegroundColor Cyan
-& (Join-Path $PSScriptRoot 'build.ps1') -Target ndk -Tag $Tag
+& (Join-Path $PSScriptRoot 'build.ps1') -Target ndk -Tag $Tag -WerrorAll
 $ndkOk = ($LASTEXITCODE -eq 0)
 $results += "ndk gate           : $(if ($ndkOk) { 'PASS' } else { 'FAIL' })"
 

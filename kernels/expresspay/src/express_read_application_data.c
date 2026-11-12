@@ -130,55 +130,6 @@ static int express_date_valid(u8 * pdate)
 	return 0;
 }
 
-static void express_create_un(void){
-	u8 randpad[4];
-	u8 *ptmp = NULL;
-
-    unsigned char i;
-    unsigned char *UnpredictNum, * EffectDate;
-    unsigned char AppEffectDateexist;
-    unsigned char a,b;
-
-    unsigned char temp[4] = {0};
-
-    unsigned short c,year;
-	int len=0;
-
-	if((EffectDate = appdata_find(0x5F25, &len)) != NULL)
-	{
-		UnpredictNum = appdata_find(TAG_9F37_UNPREDICATABLE_NUMBER, &len);
-		a = UnpredictNum[0];
-        a = a % 61;
-        b = a/12;
-        year = emv_bcd2dec(EffectDate,1);
-        year -= b;
-        b = a%12;
-		c = emv_bcd2dec(EffectDate+1,1);
-        if(b >= c)
-        {
-            year --;
-            c = (12 + c) - b;
-			emv_dec2bcd(c,EffectDate+1,1);
-            //EMVBaseU16ToBcd(EffectDate+1, c, 1);
-        }
-        else
-        {
-            c -= b;
-			emv_dec2bcd(c,EffectDate+1,1);
-            //EMVBaseU16ToBcd(EffectDate+1, c, 1);
-        }
-		emv_dec2bcd(year,EffectDate,1);
-        //EMVBaseU16ToBcd(EffectDate, year, 1);
-        emv_memset(randpad,0,4);
-        randpad[2] = EffectDate[0];
-        randpad[3] = EffectDate[1];
-
-		appdata_save(TAG_9F37_UNPREDICATABLE_NUMBER,randpad,4,OVERRIDED);
-		//emvbase_avl_createsettagvalue(EMVTAG_UnpredictNum,randpad,4);
-    }
-
-}
-
 int express_check_read_afl(void)
 {
     unsigned short t, i, j;
@@ -373,7 +324,6 @@ int express_read_application_data(void)
 
     u8      pan[50];
     int     panlen;
-	u8 buf[128] = {0};
 
 //    g_express_cnxt->da_readrec_failed = FALSE;
 
@@ -449,7 +399,7 @@ int express_read_application_data(void)
                                 || tlvs[pos].tagname == 0x50   || tlvs[pos].tagname == 0x87
                                 || tlvs[pos].tagname == 0x9F12 || tlvs[pos].tagname == 0x9F02
                                 || tlvs[pos].tagname == 0x81
-                                || tlvs[pos].tagname == 0x9F66 || tlvs[pos].tagname == 0x9F7A || tlvs[pos].tagname == 0x9F7B
+                                || tlvs[pos].tagname == 0x9F7A || tlvs[pos].tagname == 0x9F7B
                                 || (tlvs[pos].tagname & 0xFFF0) == 0x00C0
                                 || (tlvs[pos].tagname & 0xFF00) == 0xDF00)
                         {
@@ -518,44 +468,8 @@ int express_read_application_data(void)
         appdata_save(TAG_AUTH_DATA, auth_data, offset, UNIQUE);
     }
 
-    if(g_express_cnxt->msdoremv == MSD_MODE)
-    {
-    	if (!appdata_find(TAG_0057_TRACK2_EQUIVALENT_DATA, &ilen) || ilen == 0 ||
-			!appdata_find(TAG_5F25_APPLICATION_EFFECTIVE_DATE, &ilen) || ilen == 0 ||
-			!appdata_find(TAG_5F20_CARDHOLDER_NAME, &ilen) || ilen == 0)
-    	{
-        	eTRACE("AMEX-info: MSD miss 57|5F25|5F20");
-			return rERR(RD_ERR);
-    	}
-		ret = emvicc_get_data(TAG_9F36_ATC, buf, &ilen);
-
-        if(ret == 0)
-        {
-        	eTRACE("AMEX-info: MSD get ATC communicate error");
-			return rERR(RD_ERR);
-        }
-        if(ret == 0x9000)
-        {
-        	eTRACE("AMEX-info: MSD get ATC command ret = %d", ret);
-            if(!emv_memcmp(buf,"\x9F\x36",2) && buf[2]==2)// ATC found
-            {
-                appdata_save(TAG_9F36_ATC,(unsigned char*)&buf[3],2,OVERRIDED);
-            }
-            else
-            {
-            	eTRACE("AMEX-error: MSD get ATC len invliad");
-				return rERR(RD_MSD_ATC_LENERR);
-            }
-        }
-        else
-        {
-        	eTRACE("AMEX-error: MSD get ATC SW != 9000");
-			return rERR(RD_ERR);
-        }
-
-		express_create_un();
-    }
-
+    /* Expresspay v4.2 已删除 Mag-stripe/MSD（P p10 版本历史；P p43 §7.2.2），
+     * 不再执行 MSD 强制数据检查、GET DATA(9F36 ATC) 与 UN 改写（原 express_create_un）。 */
 
     return rNXT(EMV_STA_READ_APP_DATA_COMPLETED);
 }

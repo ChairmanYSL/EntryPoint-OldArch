@@ -5,7 +5,7 @@
 *
 * 设计依据（全部为美运 V4.2.3 源码检索结果，逐字段读写点见 doc/AMEX_PORT_PLAN.md §5）：
 *   - EMV_TERMPARAM（emv_type.h:510-531）15 个字段中，内核真正读取的只有 6 个；
-*   - EMV_AIDPARAM（emv_type.h:536-598）46 个字段中，零使用 3 个（ttq/zero_amt_allow 等）、
+*   - EMV_AIDPARAM（emv_type.h:536-598）46 个字段中，零使用 3 个（zero_amt_allow 等）、
 *     其余使用点集中在 emv_application_selection.c:664-721/723-859 两处；
 *   - 嵌入的 EMV_TERMPARAM（apar->term）只用到 4 个字段（9F7A/9F7B/DF69）；
 *   - EMV_AIDPARAM 大小从 712B 降到 EXPRESS_AID_PARAM 的 677B，其中 504B 是 DDOL/TDOL
@@ -70,10 +70,9 @@ typedef struct
  * 全局终端参数（由 emvtermN.par 的原始 TLV 解析；字段 = 美运 EMV_TERMPARAM 的实际读取子集）
  *
  * 字段取舍依据（AMEX_PORT_PLAN.md §5.1）：
- *   保留：ics / term_type / term_caps / term_add_caps / ttq / status_check_support /
+ *   保留：ics / term_type / term_caps / term_add_caps / 9F6D / 9F6E / status_check_support /
  *         ec_* / sm_support / zero_amt_allow / is_support_excetionfile / is_support_revoke_capk
- *   删除：ClessReaderCapab / EnhancedClessReaderCapab（改由 per-AID EXPRESS_AID_PARAM 提供，
- *         term.* 副本在 emv.c:124/132/133 只出现于默认常量，内核无读取）
+ *   删除：TTQ(9F66) —— Expresspay v4.2 全文无该 tag（见 spec 笔记 §3.6），终端能力由 9F6D/9F6E 表达。
  * ------------------------------------------------------------------------- */
 typedef struct
 {
@@ -88,7 +87,10 @@ typedef struct
                                              emv.c:630,647；保留作为 9F33 注入 appdata 的兜底值） */
     uint8_t term_add_caps[5];             /* [9F40] emv_application_selection.c:90,92,94
                                              （扩展选择 1F30 / ICTI 判定），以及 9F40 注入 */
-    uint8_t ttq[4];                       /* [9F66] emv.c:525,922 → g_emv_cnxt->ttq（TTQ 位判定入口） */
+    uint8_t cl_capability;                /* [9F6D] Contactless Reader Capabilities（1B，
+                                             Expresspay v4.2 Table 21-7 p89）；preprocess 能力门禁 */
+    uint8_t enhanced_cl_capability[4];    /* [9F6E] Enhanced Contactless Reader Capabilities（4B，
+                                             Table 21-9 p90-91）；preprocess 能力门禁 + CVM 能力位 */
 
     /* --- 注入 appdata 的终端能力/指示器（原从 EMV_AIDPARAM.term.* 读取，
            emv_application_selection.c:816-819、795-796） --- */
@@ -102,7 +104,7 @@ typedef struct
     uint8_t zero_amt_allow;               /* [DF8307] 下载保存；内核当前无读取（见 P2-3） */
     uint8_t is_support_excetionfile;      /* [DF8308] emv_terminal_risk_management.c:119（例外文件） */
     uint8_t is_support_revoke_capk;       /* [DF8309] emv_offline_data_authentication.c:263（CAPK 撤销） */
-} EXPRESS_TERM_PARAM;                     /* sizeof = 33 字节 */
+} EXPRESS_TERM_PARAM;                     /* sizeof = 34 字节 */
 
 /* ---------------------------------------------------------------------------
  * 单 AID 参数（= emvtermN.par 原始 TLV 覆盖 + emvaidsN.par 中该 AID 的原始 TLV 覆盖）
@@ -229,7 +231,7 @@ int  express_param_get_aid_count(void);
 /* 编译期尺寸门禁（C99 兼容写法）：布局被改坏时直接编译失败 */
 #define EXPRESS_STATIC_ASSERT(cond, name) typedef char express_static_assert_##name[(cond) ? 1 : -1]
 
-EXPRESS_STATIC_ASSERT(sizeof(EXPRESS_TERM_PARAM) == 33, express_term_param_size);
+EXPRESS_STATIC_ASSERT(sizeof(EXPRESS_TERM_PARAM) == 34, express_term_param_size);
 EXPRESS_STATIC_ASSERT(sizeof(EXPRESS_TERM_PRESET) == 19, express_term_preset_size);
 EXPRESS_STATIC_ASSERT(sizeof(EXPRESS_AID_PARAM) == 670, express_aid_param_size);
 EXPRESS_STATIC_ASSERT(sizeof(EXPRESS_DRL) == 26, express_drl_size);

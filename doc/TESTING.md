@@ -53,9 +53,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test_host.ps1 -Tag a
 [d] candidate list upper bound (>12 PPSE templates)
 [e] DOL packing boundary (EMV_TLV_PacketByDOL)
 [f] appdata reset (EMV_ProcessExit -> new transaction)
-assertions: 75, failures: 0, known-fails (documented gaps): 0
+assertions: 85, failures: 0, known-fails (documented gaps): 0
 RESULT: PASS
-HOST E2E: PASS (assertions=75, failures=0, known-fails=0)
+HOST E2E: PASS (assertions=85, failures=0, known-fails=0)
 ```
 
 ### 2.2 手工
@@ -202,7 +202,7 @@ libc 基础符号（`memcpy/memset/memmove/strlen/__stdio_common_vsprintf` 等�
 
 ---
 
-> **更新（2026-11-12）**：D1（内核拿不到 9F02/9C）与 D2（PPSE 解码池 tlvs[40] 容量不足）已修复——D1 由 express_preprocess 从 Entrypoint 取交易数据，D2 把解码池扩到 56（4 容器 + 12x4 对象）。当前 scripts/test_host.ps1 结果：75 断言 / 0 失败 / 0 KNOWN-FAIL。以下缺陷清单为历史记录。
+> **更新（2026-11-12）**：D1（内核拿不到 9F02/9C）与 D2（PPSE 解码池 tlvs[40] 容量不足）已修复——D1 由 express_preprocess 从 Entrypoint 取交易数据，D2 把解码池扩到 56（4 容器 + 12x4 对象）。当前 scripts/test_host.ps1 结果：85 断言 / 0 失败 / 0 KNOWN-FAIL。以下缺陷清单为历史记录。
 ## 7. 发现的真实缺陷 / 集成缺口
 
 > 均**未修改** `src/**`、`kernels/**`，仅记录证据。测试中以 `KNOWN-FAIL` 标注（不计入失败）。
@@ -264,6 +264,6 @@ libc 基础符号（`memcpy/memset/memmove/strlen/__stdio_common_vsprintf` 等�
 |---|---|---|
 | host 编译 + 符号审计 | `powershell -File scripts\build.ps1` | 保持 `BUILD OK` + `SYMBOL AUDIT OK` |
 | NDK 编译 + 符号审计 | `powershell -File scripts\build.ps1 -Target ndk` | 保持 `BUILD OK` + `SYMBOL AUDIT OK` |
-| host 真链接 + E2E | `powershell -File scripts\test_host.ps1` | `HOST E2E: PASS`（75 断言 / 0 失败 / 3 KNOWN-FAIL；`/WHOLEARCHIVE` 覆盖两库全部 TU） |
+| host 真链接 + E2E | `powershell -File scripts\test_host.ps1` | `HOST E2E: PASS`（85 断言 / 0 失败 / 0 KNOWN-FAIL；`/WHOLEARCHIVE` 覆盖两库全部 TU） |
 
 本测试不修改 `scripts\build.ps1` 的任何现有编译/审计逻辑，也不改变 `build_host`/`build_ndk` 的产物布局。
