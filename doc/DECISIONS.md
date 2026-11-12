@@ -16,5 +16,6 @@
 | D12 | 内核与 EP 全程禁止堆分配（`malloc/free` 从符号审计层面禁止） | 嵌入式/确定性要求；替换为静态/调用方缓冲 | 完成 |
 | D13 | Entrypoint 结构体两步精简：第 1 步去重复内嵌（AIDPARAM 1118→632B、TERMAPP 33→22B）；第 2 步最小必要集 + 编译期尺寸断言（AIDPARAM 55B/18 字段、TERMPARAM 23B/6 字段），内核参数走原始 TLV 回读不受影响 | 先保证可编译与行为，再做激进精简；方案/清单见 doc/STRUCT_MINIMIZATION.md | 完成（2026-11-12） |
 | D14 | AMEX 内核库当前交付"可编译+可链接+已注册"基线（13 文件/约 7.2k 行）；完整 L2 阶段逻辑与规范一致性按 `doc/AMEX_PORT_PLAN.md` S2-S6 继续 | 需要真卡/认证环境逐阶段验证 | 进行中 |
+| D17 | 最终 Outcome 由 EP 统一组装（`outcome_final_transaction`）：内核只给 scheme 私有 Outcome，EP 按 Book B 11 参数合并并只解释 UI Request / Field-off / Start 三项 | EP 是 Outcome 的唯一出口（Book B §3.5），避免 App 重复组装 | 完成（2026-11-12） |
 | D16 | 内核参数/结果通道补齐：`EMV_KERNEL_OPS` 增加可选 `exit`/`post_result`/`get_outcome`；Entrypoint 每个 `EMV_Result*` 转发结果、`EMV_ProcessExit` 通知内核退出、`EMV_GetKernelOutcome` 暴露 scheme 私有 Outcome | G9/G5 集成缺口；可选钩子保证未实现的内核零改动 | 完成（2026-11-12，提交 9fb6295/5a63dc3） |
 | D15 | 构建门禁以 `scripts/build.ps1`（host clang + NDK r23b）+ `symbol_audit.ps1` 为准；IAR 工程只同步文件列表，本机无 IAR 不能验证 | 用户要求"编译期排除静态错误"且本机可用工具限制 | 已完成（IAR 待有环境复编） |

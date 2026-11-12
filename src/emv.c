@@ -1380,6 +1380,14 @@ int32_t EMV_SetCardType(uint8_t eType)
 
 /* EMV_SetRRPTimeDelay removed: RRP is a kernel (PayPass) specific feature, must not be referenced by the Entry Point core. */
 
+static bool emv_is_final_status(int32_t s)
+{
+    return (s == EMV_ACCEPTED_OFFLINE || s == EMV_ACCEPTED_ONLINE ||
+            s == EMV_DENIALED_OFFLINE || s == EMV_DENIALED_ONLINE ||
+            s == EMV_SEEPHONE || s == EMV_ENDAPPLICATION ||
+            s == EMV_USE_ANOTHER_CARD || s == EMV_USE_OTHERCARD);
+}
+
 int32_t EMV_Process(int32_t *msginx)
 {
     int32_t ret;
@@ -1436,6 +1444,10 @@ int32_t EMV_Process(int32_t *msginx)
 			else
 			{
 				g_emv_cnxt->status = EMV_KernelProcess();
+				if (emv_is_final_status(g_emv_cnxt->status))
+				{
+					(void)outcome_final_transaction(g_emv_cnxt->status);
+				}
 				if (g_emv_cnxt->status == EMV_ERR)
 				{
 					g_emv_cnxt->status = EMV_ENDAPPLICATION;
@@ -1444,6 +1456,10 @@ int32_t EMV_Process(int32_t *msginx)
 			break;
         default:
 			g_emv_cnxt->status = EMV_KernelProcess();
+				if (emv_is_final_status(g_emv_cnxt->status))
+				{
+					(void)outcome_final_transaction(g_emv_cnxt->status);
+				}
 				if (g_emv_cnxt->status == EMV_ERR)
 				{
 					g_emv_cnxt->status = EMV_ENDAPPLICATION;

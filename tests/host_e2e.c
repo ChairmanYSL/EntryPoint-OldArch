@@ -885,6 +885,53 @@ static int setup_parameter_files(void)
     return 0;
 }
 
+
+/* ---------------------------------------------------------------------------
+ * g) G5: final Outcome assembly (Book B 11 parameters) + kernel outcome merge
+ * ------------------------------------------------------------------------- */
+static int g_outcome_count;
+static int g_uireq_count;
+static unsigned char g_outcome_status;
+
+static void test_outcome_cb(EMV_OUTCOME_DATA data)
+{
+    g_outcome_count++;
+    g_outcome_status = data.Status;
+}
+
+static void test_uireq_cb(EMV_UIREQ_DATA data, unsigned char type)
+{
+    (void)data;
+    (void)type;
+    g_uireq_count++;
+}
+
+static void case_g_final_outcome(void)
+{
+    printf("[g] final outcome assembly (Book B 11 parameters)\n");
+
+    CHECK_EQ(EMV_SetOutcome_Callback(test_outcome_cb), EMV_OK, "outcome callback must install");
+    CHECK_EQ(EMV_SetUIRequest_Callback(test_uireq_cb), EMV_OK, "UI request callback must install");
+
+    g_outcome_count = 0;
+    g_uireq_count = 0;
+    g_outcome_status = 0;
+    outcome_reset_final_flag();
+
+    CHECK_EQ(outcome_final_transaction(EMV_ACCEPTED_ONLINE), EMV_OK, "approved transaction outcome must succeed");
+    CHECK_EQ(g_outcome_count, 1, "outcome callback must be invoked once");
+    CHECK_EQ((int)g_outcome_status, OUTCOME_STATUS_APPROVED, "approved status must be Book B 0x10");
+    CHECK(g_uireq_count >= 1, "approved outcome must carry UI request '03'");
+
+    CHECK_EQ(outcome_final_transaction(EMV_ACCEPTED_ONLINE), EMV_OK, "duplicate final outcome is accepted");
+    CHECK_EQ(g_outcome_count, 1, "duplicate final outcome must not be re-sent");
+
+    g_outcome_count = 0;
+    g_uireq_count = 0;
+    outcome_reset_final_flag();
+    CHECK_EQ(outcome_final_transaction(EMV_DENIALED_OFFLINE), EMV_OK, "declined transaction outcome must succeed");
+    CHECK_EQ((int)g_outcome_status, OUTCOME_STATUS_DECLINED, "declined status must be Book B 0x20");
+}
 int main(void)
 {
     printf("== Entrypoint + AMEX Expresspay host E2E test ==\n\n");
@@ -908,6 +955,7 @@ int main(void)
     case_d_candidate_cap();
     case_e_dol_packet_bounds();
     case_f_appdata_reset();
+    case_g_final_outcome();
 
     printf("\n--------------------------------------------\n");
     printf("assertions: %d, failures: %d, known-fails (documented gaps): %d\n",

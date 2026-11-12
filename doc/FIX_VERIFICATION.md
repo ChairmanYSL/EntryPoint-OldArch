@@ -67,7 +67,7 @@ struct: EMV_AIDPARAM=632  EMV_TERMPARAM=486  EMV_TERMAPP=22  EMV_CANDIDATE=65  E
 1. ~~**结构体第 2 步**~~（已完成 2026-11-12）：`EMV_AIDPARAM` 55B/18 字段、`EMV_TERMPARAM` 23B/6 字段，含编译期尺寸断言（doc/STRUCT_MINIMIZATION.md）。
 2. ~~**host 桩 ICC 端到端测试**~~（已完成 2026-11-12）：`scripts/test_host.ps1` → **75 断言 / 0 失败 / 0 KNOWN-FAIL**（whole-archive 真链接门禁）；覆盖链接门禁、AMEX 注册与调度、恶意 SDOL、候选上限、DOL 边界、appdata 复位。
    - 测试暴露并已修复：D1（内核拿不到 9F02/9C：在 `express_preprocess` 从 Entrypoint 取交易数据）；D2（PPSE 解码池 `tlvs[40]` 容不下 12 个完整候选：扩到 56 并验证 10 个完整模板→10 候选）。
-3. **G5 自动合并**：内核 Outcome 已可取出（`EMV_GetKernelOutcome`），但 Entrypoint 尚未按 Book B 11 参数规则自动组装最终 Outcome。
+3. ~~**G5 自动合并**~~（已完成 2026-11-12）：`outcome_final_transaction()` 按 Book B 11 参数组装最终 Outcome，合并内核私有值；E2E 用例 g（85 断言）覆盖 approved/declined/重复发送抑制。
 4. **Expresspay v4.2 精修**：删除 MSD 分支、9F6D/9F6E 判定替代 TTQ、离线 PIN 禁止、2nd GAC/脚本/DDX 按规范处理。
 5. **G2 DRL getter**（v4.2 已移除 DRL，可延后）；**IAR 工程复编**（本机无 IAR）；**真实测试卡/读卡器与 EMVCo TTA 认证**。
 6. 91 条历史 warning 清理后启用 `-WerrorAll` 严格门禁。

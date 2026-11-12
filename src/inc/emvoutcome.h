@@ -157,4 +157,6 @@ int outcome_seephone(void);
 int outcome_try_again_without_restart(void);
 int outcome_try_again_end_application(void);
 void msg_read_card_ok(void);
+int outcome_final_transaction(int32_t ep_status);   /* G5: assemble final Book B Outcome */
+void outcome_reset_final_flag(void);
 #endif

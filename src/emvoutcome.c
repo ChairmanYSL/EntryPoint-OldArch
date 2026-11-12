@@ -1,4 +1,5 @@
 #include "emvi.h"
+#include "emv_kernel.h"
 #include "emvoutcome.h"
 
 #define OUTCOME_FLAG	1
@@ -45,6 +46,7 @@ void EMV_InitDiscData()
 
 void EMV_InitOutCome()
 {
+	outcome_reset_final_flag();
 	emv_memset((void *)&g_outcome, 0, sizeof(EMV_OUTCOME_DATA));
 	g_outcome.Status = OUTCOME_STATUS_NA;
 	g_outcome.Start = OUTCOME_START_NA;
@@ -574,3 +576,128 @@ int outcome_request_another_payment()
 //	return EMV_ACCEPTED_OFFLINE;
 //}
 
+/* ---------------------------------------------------------------------------
+ * G5: final Outcome assembly (EMVCo Book B 3.5 / Book A Table 6-2, 11 params).
+ * Merges the scheme-specific outcome of the selected kernel when available;
+ * otherwise the Book B status is derived from the Entry Point status code.
+ * Only the three fields the EP must act on are interpreted (UI request, Hold/
+ * Field-off, Start); the rest are passed through untouched to the reader.
+ * ------------------------------------------------------------------------- */
+static int s_final_outcome_sent = 0;
+
+void outcome_reset_final_flag(void)
+{
+    s_final_outcome_sent = 0;
+}
+
+int outcome_final_transaction(int32_t ep_status)
+{
+    EMV_KERNEL_OUTCOME ko;
+    unsigned char status = OUTCOME_STATUS_NA;
+    unsigned char start = OUTCOME_START_NA;
+    unsigned char online_data = OUTCOME_ONLINE_RESP_DATA_NA;
+    unsigned char cvm = OUTCOME_CVM_NA;
+    unsigned char ui_msg = UIREQUEST_MESSAGEID_NA;
+    unsigned char ui_on_outcome = 0;
+    unsigned char ui_on_restart = 0;
+    unsigned char data_record = 0;
+    unsigned char disc_data = 0;
+    unsigned char receipt = 0;
+    unsigned char aip = OUTCOME_AIP_NA;
+    unsigned char field_off = OUTCOME_FIELDOFF_NA;
+    unsigned char removal = 0;
+    unsigned char hold_time[3] = {0x00, 0x00, 0x13};
+    unsigned char lang_pre[8] = {0};
+    int lang_pre_len = 0;
+    unsigned char *lang_pre_ptr;
+
+    if (s_final_outcome_sent)
+    {
+        return EMV_OK;
+    }
+
+    switch (ep_status)
+    {
+        case EMV_ACCEPTED_OFFLINE:
+        case EMV_ACCEPTED_ONLINE:
+            status = OUTCOME_STATUS_APPROVED;
+            ui_msg = UIREQUEST_MESSAGEID_APPROVED;
+            break;
+        case EMV_DENIALED_OFFLINE:
+        case EMV_DENIALED_ONLINE:
+            status = OUTCOME_STATUS_DECLINED;
+            ui_msg = UIREQUEST_MESSAGEID_DECLINED;
+            break;
+        case EMV_SEEPHONE:
+            status = OUTCOME_STATUS_TRY_ANOTHER_INTERFACE;
+            ui_msg = UIREQUEST_MESSAGEID_SEEPHONE;
+            break;
+        case EMV_ENDAPPLICATION:
+        case EMV_USE_ANOTHER_CARD:
+        case EMV_USE_OTHERCARD:
+            status = OUTCOME_STATUS_END_APPLICATION;
+            ui_msg = UIREQUEST_MESSAGEID_ERROR_OTHER_CARD;
+            break;
+        default:
+            return EMV_OK;      /* intermediate request, not a final outcome */
+    }
+
+    if (EMV_GetKernelOutcome(&ko) == 0 &&
+        ko.status >= OUTCOME_STATUS_APPROVED &&
+        ko.status <= OUTCOME_STATUS_TRY_ANOTHER_AGAIN)
+    {
+        status = ko.status;
+        start = ko.start;
+        online_data = ko.online_resp_data;
+        cvm = ko.cvm;
+        ui_on_outcome = (ko.present_flag & 0x80) ? 1 : 0;
+        ui_on_restart = (ko.present_flag & 0x40) ? 1 : 0;
+        data_record = (ko.present_flag & 0x20) ? 1 : 0;
+        disc_data = (ko.present_flag & 0x10) ? 1 : 0;
+        receipt = (ko.present_flag & 0x08) ? 1 : 0;
+        aip = ko.interface_preference;
+        field_off = ko.field_off_req;
+        removal = ko.removal_timeout[0];
+    }
+    else
+    {
+        if (status == OUTCOME_STATUS_APPROVED || status == OUTCOME_STATUS_DECLINED)
+        {
+            ui_on_outcome = 1;
+            data_record = (g_data_record_len > 0) ? 1 : 0;
+        }
+        else if (status == OUTCOME_STATUS_TRY_ANOTHER_INTERFACE)
+        {
+            ui_on_outcome = 1;
+        }
+    }
+
+    if (ui_on_outcome && ui_msg != UIREQUEST_MESSAGEID_NA)
+    {
+        lang_pre_ptr = appdata_find(TAG_5F2D_LANGUAGE_PREFERENCE, &lang_pre_len);
+        if (lang_pre_ptr && lang_pre_len > 0)
+        {
+            if (lang_pre_len > (int)sizeof(lang_pre))
+            {
+                lang_pre_len = (int)sizeof(lang_pre);
+            }
+            emv_memcpy(lang_pre, lang_pre_ptr, lang_pre_len);
+        }
+        EMV_SetUIRequest(ui_msg, UIREQUEST_STATUS_READY_TO_READ, hold_time, lang_pre, 0, NULL, NULL);
+        if (g_send_outcome_cb.pSendUIRequest != NULL)
+        {
+            g_send_outcome_cb.pSendUIRequest(g_uireq, UI_TYPE_ON_OUTCOME);
+        }
+    }
+
+    EMV_SetOutCome(status, start, online_data, cvm, ui_on_outcome, ui_on_restart,
+                   data_record, disc_data, receipt, aip, field_off, removal);
+
+    if (g_send_outcome_cb.pSendOutcome != NULL)
+    {
+        g_send_outcome_cb.pSendOutcome(g_outcome);
+    }
+
+    s_final_outcome_sent = 1;
+    return EMV_OK;
+}
