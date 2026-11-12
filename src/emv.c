@@ -21,6 +21,7 @@
 */
 
 #include "emvi.h"
+#include "emv_kernel.h"
 
 
 /*
@@ -1430,11 +1431,19 @@ int32_t EMV_Process(int32_t *msginx)
 			}
 			else
 			{
-				g_emv_cnxt->status = emv_k_interface.emv_process();
+				g_emv_cnxt->status = EMV_KernelProcess();
+				if (g_emv_cnxt->status == EMV_ERR)
+				{
+					g_emv_cnxt->status = EMV_ENDAPPLICATION;
+				}
 			}
 			break;
         default:
-			g_emv_cnxt->status = emv_k_interface.emv_process();
+			g_emv_cnxt->status = EMV_KernelProcess();
+				if (g_emv_cnxt->status == EMV_ERR)
+				{
+					g_emv_cnxt->status = EMV_ENDAPPLICATION;
+				}
 			break;
     }
 

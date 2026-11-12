@@ -618,22 +618,9 @@ int32_t EMV_ProcessExit(void);
 int32_t EMV_Exit(void);
 
 
-typedef struct
-{
-	int32_t (*emv_process)(void);
-	int32_t (*emv_app_sel_init)(void);
-	int32_t (*emv_initiate_application)(void);
-	int32_t (*emv_read_application_data)(void);
-	int32_t (*emv_offline_data_auth)(void);
-	int32_t (*emv_processing_restrictions)(void);
-	int32_t (*emv_cardholder_verify)(void);
-	int32_t (*emv_terminal_risk_manage)(void);
-	int32_t (*emv_action_analyse)(void);
-	int32_t (*emv_compelte)(int32_t *msginx);
+/* emv_kernel_interface removed: kernel dispatch is now registry-based (emv_kernel.h). */
 
-}emv_kernel_interface;
 
-extern emv_kernel_interface emv_k_interface;
 
 
 #if defined(__cplusplus)

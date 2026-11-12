@@ -574,6 +574,7 @@ void candidate_del(int32_t index);
 ************************************************************************************************************************
 */
 int32_t emv_select_kernel(uint8_t card_type, uint8_t emv_core);
+uint8_t emv_kernel_id_to_contactless(uint8_t kernel_id);
 uint32_t ics_option(uint32_t option_id);      /* provided by the application (ICS options) */
 int32_t CreateEMVDiscretionaryData(void);
 int32_t emv_combination_Selection(void);

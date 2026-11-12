@@ -878,6 +878,7 @@ int32_t GetTagFromList(uint32_t List, uint32_t *item_arry, int32_t size)
 
 uint8_t *GetAndRemoveFromList(uint32_t *itemLen, uint32_t List)
 {
+	static uint8_t s_item_buffer[2048];
 	uint8_t *list_ptr, *tmpbuf,*rest_buf;
 	int32_t len,i,j,tag_len,list_len,len_byte,num_bytes;
 	uint32_t sup_tags[] = {
@@ -989,17 +990,21 @@ uint8_t *GetAndRemoveFromList(uint32_t *itemLen, uint32_t List)
 
 	*itemLen = i;
 
-	//warning, this API use malloc to get memory,must be free by caller
-	tmpbuf = (uint8_t *)malloc(i);
-	emv_memset(tmpbuf, 0, i);
+	/* No heap allocation in the kernel: the item is copied into a module static
+	 * buffer (single-threaded kernel, documented as "valid until next call"), and
+	 * the remaining list is written back directly (appdata_save copies the value). */
+	if (i > (int32_t)sizeof(s_item_buffer))
+	{
+		*itemLen = 0;
+		return NULL;
+	}
+	tmpbuf = s_item_buffer;
+	emv_memset(tmpbuf, 0, (uint32_t)i);
 	emv_memcpy(tmpbuf, list_ptr, i);
 
-	if(list_len > i)
+	if (list_len > i)
 	{
-		rest_buf = (uint8_t *)malloc(list_len - i);
-		emv_memset(rest_buf, 0, list_len - i);
-		emv_memcpy(rest_buf, list_ptr+i, list_len - i);
-		appdata_save(List, rest_buf, list_len - i, OVERRIDED);
+		appdata_save(List, list_ptr + i, list_len - i, OVERRIDED);
 	}
 	else
 	{
