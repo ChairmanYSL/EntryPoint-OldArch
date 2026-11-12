@@ -483,6 +483,31 @@ static int32_t express_kernel_preprocess(bool b_online)
     return express_preprocess(b_online ? 1 : 0);
 }
 
+/* G5: expose the Expresspay outcome through the generic Entry Point outcome hook. */
+static int32_t express_kernel_get_outcome(EMV_KERNEL_OUTCOME *out)
+{
+    EXPRESS_OUTCOME eo;
+
+    if (out == NULL)
+    {
+        return -1;
+    }
+    if (express_get_outcome(&eo) != 0)
+    {
+        return -1;
+    }
+
+    out->status               = eo.Status;
+    out->start                = eo.Start;
+    out->online_resp_data     = eo.OnlineRespData;
+    out->cvm                  = eo.CVM;
+    out->present_flag         = eo.PresentFlag;
+    out->interface_preference = eo.InterfacePrefer;
+    out->field_off_req        = eo.FieldoffReq;
+    out->removal_timeout[0]   = eo.RemovalTimeout[0];
+    out->removal_timeout[1]   = eo.RemovalTimeout[1];
+    return 0;
+}
 static const EMV_KERNEL_OPS g_amex_kernel_entrypoint_ops =
 {
     EMV_KERNEL_ID_AMEX,                    /* kernel_id = 0x04 */

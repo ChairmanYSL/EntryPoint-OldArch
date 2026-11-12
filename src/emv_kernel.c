@@ -104,3 +104,16 @@ void EMV_KernelExit(void)
         g_current_kernel->exit();
     }
 }
+
+int32_t EMV_GetKernelOutcome(EMV_KERNEL_OUTCOME *out)
+{
+    if (out == 0)
+    {
+        return -1;
+    }
+    if (g_current_kernel == 0 || g_current_kernel->get_outcome == 0)
+    {
+        return -1;
+    }
+    return g_current_kernel->get_outcome(out);
+}

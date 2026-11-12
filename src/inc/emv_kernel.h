@@ -38,6 +38,23 @@ extern "C" {
 
 #define EMV_KERNEL_MAX                 8
 
+/* Generic Entry Point Outcome, as defined by Book B (status / start / UI flags /
+ * online data / CVM / interface preference / field-off / removal timeout).
+ * A kernel may refine the Entry Point outcome with scheme-specific values
+ * (e.g. Expresspay 0xA0/0xB0/0xC0/0xD0); the application merges it via
+ * EMV_GetKernelOutcome(). */
+typedef struct
+{
+    uint8_t status;
+    uint8_t start;
+    uint8_t online_resp_data;
+    uint8_t cvm;
+    uint8_t present_flag;
+    uint8_t interface_preference;
+    uint8_t field_off_req;
+    uint8_t removal_timeout[2];
+} EMV_KERNEL_OUTCOME;
+
 /**
  * @brief Kernel operation table, provided by each kernel library.
  * @note  All function pointers are mandatory except 'name'.
@@ -52,7 +69,10 @@ typedef struct
     void    (*exit)(void);                       /* optional: transaction end cleanup */
     void    (*post_result)(int32_t kind, int32_t result,
                            const uint8_t *data, int32_t len); /* optional: result callback */
+    int32_t (*get_outcome)(EMV_KERNEL_OUTCOME *out);          /* optional: scheme-specific outcome */
 } EMV_KERNEL_OPS;
+
+
 
 /* post_result kinds (one per Entry Point EMV_Result* API) */
 #define EP_RESULT_KIND_SEL_CANDIDATES     1
@@ -102,6 +122,12 @@ void EMV_KernelPostResult(int32_t kind, int32_t result, const uint8_t *data, int
  * @brief  Notify the current kernel that the transaction is finished (optional hook).
  */
 void EMV_KernelExit(void);
+
+/**
+ * @brief  Get the scheme-specific outcome of the selected kernel (optional).
+ * @return 0 on success, -1 when no kernel / hook is available.
+ */
+int32_t EMV_GetKernelOutcome(EMV_KERNEL_OUTCOME *out);
 
 /* Internal: called by emv_select_kernel() after a successful selection. */
 void EMV_SetSelectedKernel(const EMV_KERNEL_OPS* ops);
