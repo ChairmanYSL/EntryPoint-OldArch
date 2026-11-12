@@ -1175,6 +1175,8 @@ int32_t get_trans_sequence_counter(uint8_t* buf)
  * @param   par     [OU]�ն����ò������ο�{@link EMV_TERMPARAM}
  * @return  =0      �ɹ�
  * @return  <0      ʧ��
+ * @note    Only the minimal retained field set is returned (see emv_type.h);
+ *          use emv_get_termparam() for the complete parameter file as raw TLV.
  */
 int32_t get_termparam(EMV_TERMPARAM* par)
 {
@@ -1209,6 +1211,8 @@ int32_t get_termapps(EMV_TERMAPP* apps)
  * @param   inx     [IN]Ӧ�ö�Ӧ�ն�Ӧ���б�������
  * @return  =0      �ɹ�
  * @return  <0      ʧ��
+ * @note    Only the fields EMV_PreProcess() consumes are filled (see
+ *          emv_type.h); kernels use emv_get_aidparam()/..._aidparam_tlv().
  */
 int32_t get_aidparam(EMV_AIDPARAM* par, int32_t inx)
 {

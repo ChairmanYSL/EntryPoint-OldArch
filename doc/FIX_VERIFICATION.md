@@ -64,7 +64,7 @@ struct: EMV_AIDPARAM=632  EMV_TERMPARAM=486  EMV_TERMAPP=22  EMV_CANDIDATE=65  E
 
 ## 5. 仍未闭环（下一阶段）
 
-1. **结构体第 2 步**（子任务进行中）：目标 AIDPARAM ≤160B、TERMPARAM ≤80B。
+1. ~~**结构体第 2 步**~~（已完成 2026-11-12）：`EMV_AIDPARAM` 55B/18 字段、`EMV_TERMPARAM` 23B/6 字段，含编译期尺寸断言（doc/STRUCT_MINIMIZATION.md）。
 2. **host 桩 ICC 端到端测试**（子任务进行中）：链接门禁 + 状态机/恶意 SDOL/候选上限/DOL 边界/appdata 复位用例。
 3. **G5 自动合并**：内核 Outcome 已可取出（`EMV_GetKernelOutcome`），但 Entrypoint 尚未按 Book B 11 参数规则自动组装最终 Outcome。
 4. **Expresspay v4.2 精修**：删除 MSD 分支、9F6D/9F6E 判定替代 TTQ、离线 PIN 禁止、2nd GAC/脚本/DDX 按规范处理。
