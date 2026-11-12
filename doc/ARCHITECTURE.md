@@ -112,9 +112,9 @@ int32_t EMV_KernelProcess(void);                          /* EP 内部调度 */
 
 - **已落地**：S1-S4（Expresspay 子内核 13 TU 编译/链接/注册），G9（EMV_Result* → 内核 `post_result`、`EMV_ProcessExit` → 内核 `exit`，2026-11-12 提交 `9fb6295`）；G6（`EMV_GetSelectedCandidate`）；G1（参数原始 TLV 回读声明）；G8（组合选择/内核选择解耦）。
 - **待落地（按优先级）**：
-  1. **标签口径统一**：内核 TDOL 用 `0x1F03`、Status Check 用 `0x1F02`，Entrypoint `emvporting.c` 用 `0xDF8102`/`0xDFC108`。同一份参数文件服务两套解析时必须双 tag 兼容或统一口径（否则内核拿不到 TDOL/StatusCheck 指示）。
+  1. ~~**标签口径统一**~~（已完成 2026-11-12）：Entrypoint 参数层与 Expresspay 内核双向兼容 `0x1F03/0xDF8102`（Default TDOL）与 `0x1F02/0xDFC108`（Status Check Support）。
   2. **G2** DRL getter（`emv_get_drl`）：Expresspay v4.2 已移除 DRL，可继续用 AID 级 DF19/DF20/DF21 回退；如需支持旧配置再补。
-  3. **G5** Outcome 合并：内核 `express_get_outcome()` 已实现，Entrypoint 组装 Outcome 时尚未合并 Expresspay 私有 0xA0/0xB0/0xC0/0xD0 值。
+  3. **G5**（部分完成）：`EMV_KERNEL_OPS.get_outcome` + `EMV_GetKernelOutcome()` 已落地（2026-11-12），App 可取到 Expresspay 私有 0xA0/0xB0/0xC0/0xD0；**Entrypoint 自动合并进最终 Outcome 仍待做**（需按 Book B 的 11 参数组装规则实现）。
   4. **spec v4.2 精修**：删除 MSD 分支、9F6D/9F6E 判定重写（Amex 无 TTQ）、离线 PIN 强制禁止、2nd GAC/脚本/DDX 按规范处理。
   5. **桩 ICC 端到端**：GPO→READ→GAC→ARQC→ARC=00 全流程联调（当前仅编译/链接/静态审计）。
   6. Entrypoint 侧 `EMV_TERMPARAM/EMV_AIDPARAM` 第 2 步最小化（`doc/STRUCT_MINIMIZATION.md`）。
