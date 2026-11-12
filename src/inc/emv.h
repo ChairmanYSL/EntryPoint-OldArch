@@ -418,6 +418,11 @@ int32_t EMV_SetTransAmount(uint32_t nAmount);
  * @return  {@link EMV_NONIDLE}                     �ں˷ǿ���״̬
  */
 int32_t EMV_SetOtherAmount(uint32_t nAmount);
+int32_t EMV_SetTransAmountAbsent(bool flag);
+int32_t EMV_SetOtherAmountAbsent(bool flag);
+int32_t EMV_SetTransAmountEmpty(bool flag);
+int32_t EMV_SetOtherAmountEmpty(bool flag);
+int32_t EMV_SetTransTypeAbsent(bool flag);
 
 /**
  * ����Ԥ������QPBOCר�ã�

@@ -147,4 +147,14 @@ int outcome_select_next();
 int outcome_try_again();
 
 
+void EMV_InitErrorIndication(void);
+void EMV_InitDataRecord(void);
+void EMV_InitDiscData(void);
+int outcome_request_another_payment(void);
+int outcome_end_application(void);
+int outcome_end_application_startB(void);
+int outcome_seephone(void);
+int outcome_try_again_without_restart(void);
+int outcome_try_again_end_application(void);
+void msg_read_card_ok(void);
 #endif

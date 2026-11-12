@@ -1,3 +1,4 @@
+#include <string.h>
 /**
  *******************************************************************************
  * @file    emvtlv.c
@@ -12,6 +13,8 @@
 
 #include "emvi.h"
 #include <stdlib.h>
+
+static int32_t recur_decode(int32_t parent, EMV_TLVOBJ *tlvs, int32_t tlvs_max, int32_t flags);
 
 #define is_constructed(c)       ((c) & 0x20)
 #define is_primitive(c)         (!is_constructed((c)))

@@ -45,7 +45,11 @@
 #define EMV_CFG_ICC_SEND_MAXLEN         262                 /* ��Ƭ����ͳ��� */
 #define EMV_CFG_ICC_RECV_MAXLEN         512                 /* ��Ƭ�����ճ��� */
 
-#define EMV_CFG_MAX_APPS                128                 /* ���֧��Ӧ�ø�����������255 */
+#define EMV_CFG_MAX_APPS                128
+
+#define EMV_CFG_MAX_CANDIDATES          12
+
+#include "emvdbg.h"                 /* ���֧��Ӧ�ø�����������255 */
 
 
 /*
@@ -115,6 +119,7 @@ typedef struct
 typedef struct
 {
     int32_t emvbuffer_size;                                     //!< ͨ��<alloc_buffer>�ӿڷ�����ں˵�ȫ�ֻ����С
+    uint32_t kernel_checksum;
     uint32_t config_checksum;                                    //!< �ն�����У��ͣ�CRC32��
 
     EMV_TERMAPP* termapps;                                //!< �ն�Ӧ���б�������
@@ -159,6 +164,8 @@ typedef struct
     //----------------------------
     uint8_t contactless_type;                                           //!< ֧����ʽ��@link EMV_PayModes��
 
+	bool amount_empty;
+	bool oth_amount_empty;
 	bool amount_absent;
 	bool oth_amount_absent;
 	bool trans_type_absent;
@@ -335,6 +342,9 @@ int32_t emvicc_get_challenge(uint8_t *out, int32_t *outlen);
  * @return          [>0]-SW1SW2, [<0]-����.
  */
 int32_t emvicc_get_data(uint32_t tag, uint8_t *out, int32_t *outlen);
+int32_t emvicc_spi(uint8_t *pdolv, int32_t pdolvlen, uint8_t *out, int32_t *outlen);
+void emvicc_set_stop_flag(bool flag);
+bool emvicc_get_stop_flag(void);
 
 
 /**
@@ -400,6 +410,9 @@ int32_t emvicc_relay_resistance_protocol(uint8_t *term_rr_entropy, int32_t len, 
 int32_t emvicc_compute_crypyographic_checksum(uint8_t *udolv, int32_t udolvlen, uint8_t *out, int32_t *outlen);
 int32_t emvicc_put_data(uint32_t tag, uint8_t *in, int32_t inlen);
 int32_t emvicc_get_data(uint32_t tag, uint8_t *out, int32_t *outlen);
+int32_t emvicc_spi(uint8_t *pdolv, int32_t pdolvlen, uint8_t *out, int32_t *outlen);
+void emvicc_set_stop_flag(bool flag);
+bool emvicc_get_stop_flag(void);
 ////////////////////////////////////////////////////////////////////////////////
 /* emvtlv.c */
 int32_t remove_tag_from_tags2readyet(int32_t tagname);
@@ -555,6 +568,16 @@ void candidate_del(int32_t index);
 */
 
 
+/*
+************************************************************************************************************************
+*                                               CROSS-MODULE PROTOTYPES
+************************************************************************************************************************
+*/
+int32_t emv_select_kernel(uint8_t card_type, uint8_t emv_core);
+uint32_t ics_option(uint32_t option_id);      /* provided by the application (ICS options) */
+int32_t CreateEMVDiscretionaryData(void);
+int32_t emv_combination_Selection(void);
+int32_t emvtlv_decode_paypass(uint8_t *data, int32_t data_len, EMV_TLVOBJ *tlvs, int32_t tlvs_max, int32_t flags);
 #endif /* EMVI_H_ */
 /*
 ************************************************************************************************************************

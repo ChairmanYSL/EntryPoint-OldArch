@@ -31,6 +31,7 @@
 #include "emvporting.h"
 #include "emvspi.h"
 #include "emvi.h"
+#include "emv_port_sdk.h"
 /*
 ************************************************************************************************************************
 *                                                     LOCAL DEFINES
@@ -1463,6 +1464,8 @@ static int32_t conv_tag_to_buf(uint32_t tag, uint8_t len, uint8_t* out, int32_t 
     out[j++] = len;
     (*rlen) += j;
 
+
+    return j;
 }
 
 static int32_t conv_capk_to_tlv(EMV_CAPKPARAM* in, uint8_t *out, int32_t *rlen)

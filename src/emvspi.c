@@ -1,3 +1,6 @@
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 /**
 ************************************************************************************************************************
 *                                        COPYRIGHT (C) 2015 Kingsee Tech. Co., Ltd.
@@ -29,6 +32,7 @@
 #include "emvporting.h"
 #include "ks_crypt.h"
 #include "emvi.h"
+#include "emv_port_sdk.h"
 
 /** �����Ƿ�ʹ��SDK2.0��API */
 #define CFG_EMV_L2TEST_USE_SDKV2        0

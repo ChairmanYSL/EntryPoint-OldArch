@@ -1,3 +1,6 @@
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 /**
 ************************************************************************************************************************
 *                                        COPYRIGHT (C) 2014 Kingsee Tech. Co., Ltd.
@@ -1036,7 +1039,7 @@ int32_t EMV_Init(const EMV_PORTING* pPort)
 	g_emv_cnxt->tlvbuffer_size = TLVBUFFER_SIZE;
 	current_ptr += g_emv_cnxt->tlvbuffer_size;
 
-    g_emv_cnxt->preprocess_result = (EMV_TERMAPP*)current_ptr;
+    g_emv_cnxt->preprocess_result = (EMV_PREPROCESS_RESULT*)current_ptr;
 	uint32_t preprocess_size = sizeof(EMV_PREPROCESS_RESULT) * g_emv_cnxt->termapps_num;
 	current_ptr += ((preprocess_size+3) & ~3);
 
@@ -1136,6 +1139,39 @@ int32_t EMV_SetOtherAmountAbsent(bool flag)
     return EMV_OK;
 }
 
+int32_t EMV_SetTransAmountEmpty(bool flag)
+{
+    if (g_emv_cnxt == NULL)
+        return EMV_UNINITIALIZED;
+    if (g_emv_cnxt->status != EMV_STA_IDLE)
+        return rERR(EMV_NONIDLE);
+
+    g_emv_cnxt->amount_empty = flag;
+    return EMV_OK;
+}
+
+int32_t EMV_SetOtherAmountEmpty(bool flag)
+{
+    if (g_emv_cnxt == NULL)
+        return EMV_UNINITIALIZED;
+    if (g_emv_cnxt->status != EMV_STA_IDLE)
+        return rERR(EMV_NONIDLE);
+
+    g_emv_cnxt->oth_amount_empty = flag;
+    return EMV_OK;
+}
+
+int32_t EMV_SetTransTypeAbsent(bool flag)
+{
+    if (g_emv_cnxt == NULL)
+        return EMV_UNINITIALIZED;
+    if (g_emv_cnxt->status != EMV_STA_IDLE)
+        return rERR(EMV_NONIDLE);
+
+    g_emv_cnxt->trans_type_absent = flag;
+    return EMV_OK;
+}
+
 int32_t EMV_SetOtherAmount(uint32_t nAmount)
 {
     if (g_emv_cnxt == NULL)
@@ -1152,7 +1188,7 @@ int32_t EMV_SetOtherAmount(uint32_t nAmount)
 int32_t EMV_PreProcess(uint8_t bOnline)
 {
 	EMV_AIDPARAM  aid_param={0};
-	int i,j,;
+	int i, j;
 	uint32_t status_check_amt = 1;
 	bool endFlag = true;
 	EMV_PREPROCESS_RESULT preprocess={0};
@@ -1197,7 +1233,7 @@ int32_t EMV_PreProcess(uint8_t bOnline)
 				if (g_emv_cnxt->trans_amount == status_check_amt)
 				{
 					eTRACE("ep-info: g_emv_cnxt->trans_amount == status_check_amt");
-					preprocess.ttq[1] &= 0x80;
+					preprocess.ttq[1] |= 0x80;
 				}
 			}
 			//3.1.1.4
@@ -1233,7 +1269,7 @@ int32_t EMV_PreProcess(uint8_t bOnline)
 			//3.1.1.6
 			if (aid_param.cl_floor_limit_exist)
 			{
-				if(preprocess.ttq[0] & 0x08))
+				if (preprocess.ttq[0] & 0x08)
 				{
 					//For an Offline-only Terminal, the Reader Contactless Floor Limit should not be present
 					//as the terminal cannot process transactions online
@@ -1250,7 +1286,7 @@ int32_t EMV_PreProcess(uint8_t bOnline)
 			else
 			{
 				//3.1.1.7
-				if(preprocess.ttq[0] & 0x08))
+				if (preprocess.ttq[0] & 0x08)
 				{
 					//For an Offline-only Terminal, the Reader Contactless Floor Limit should not be present
 					//as the terminal cannot process transactions online
@@ -1267,7 +1303,7 @@ int32_t EMV_PreProcess(uint8_t bOnline)
 			//3.1.1.8
 			if(aid_param.cvm_limit_exist)
 			{
-				if (g_emv_cnxt->trans_amount >= emv_bcd2dec(aid_param.cvm_limit_exist, sizeof(aid_param.cvm_limit_exist)))
+				if (g_emv_cnxt->trans_amount >= emv_bcd2dec(aid_param.cvm_limit, sizeof(aid_param.cvm_limit)))
 				{
 					preprocess.reader_cvm_limit_exceed = 1;
 					eTRACE("ep-warning: trans amount exceed cvm limit");
@@ -1276,19 +1312,19 @@ int32_t EMV_PreProcess(uint8_t bOnline)
 			//3.1.1.9
 			if(preprocess.reader_cl_floor_limit_exceed)
 			{
-				preprocess.ttq[1] &= 0x80;
+				preprocess.ttq[1] |= 0x80;
 			}
 			//3.1.1.10
 			if(preprocess.status_check_requested)
 			{
-				preprocess.ttq[1] &= 0x80;
+				preprocess.ttq[1] |= 0x80;
 			}
 			//3.1.1.11
 			if(preprocess.zero_amount)
 			{
 				if(!(preprocess.ttq[0] & 0x08))
 				{
-					preprocess.ttq[1] &= 0x80;
+					preprocess.ttq[1] |= 0x80;
 				}
 				else
 				{
@@ -1298,7 +1334,7 @@ int32_t EMV_PreProcess(uint8_t bOnline)
 			//3.1.1.12
 			if(preprocess.reader_cvm_limit_exceed)
 			{
-				preprocess.ttq[1] &= 0x40;
+				preprocess.ttq[1] |= 0x40;
 			}
 
             emv_memcpy(g_emv_cnxt->preprocess_result + i, &preprocess, sizeof(EMV_PREPROCESS_RESULT));
@@ -1337,13 +1373,7 @@ int32_t EMV_SetCardType(uint8_t eType)
     }
 }
 
-int EMV_SetRRPTimeDelay(int delay)
-{
-    if (g_emv_cnxt == NULL)
-        return EMV_UNINITIALIZED;
-
-    return paypass_set_rrp_delay(delay);
-}
+/* EMV_SetRRPTimeDelay removed: RRP is a kernel (PayPass) specific feature, must not be referenced by the Entry Point core. */
 
 int32_t EMV_Process(int32_t *msginx)
 {
@@ -1575,7 +1605,7 @@ int32_t EMV_ResultIssuerReferral(int32_t eResult)
 
 uint8_t* EMV_GetData(uint32_t nTag, int32_t* pLen)
 {
-    if (g_emv_cnxt->status == EMV_STA_IDLE || g_emv_cnxt == NULL)
+    if (g_emv_cnxt == NULL || g_emv_cnxt->status == EMV_STA_IDLE)
     {
         return NULL;
     }

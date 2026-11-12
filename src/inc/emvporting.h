@@ -206,6 +206,12 @@ int32_t emvporting_write_file(char *filename, uint32_t filesize, uint8_t *buf, u
 */
 
 
+int32_t emvporting_clr_termparam(void);
+int32_t emvporting_get_termparam_tlv(uint8_t* par, int32_t *rlen);
+int32_t emvporting_get_aidparam_tlv(int32_t inx, uint8_t* par, int32_t *rlen);
+int32_t emvporting_get_capkparam_tlv(int32_t inx, uint8_t* par, int32_t *rlen);
+int32_t emvporting_clr_drl(void);
+int32_t emvporting_add_drl(void * par, int32_t len);
 #endif /* EMVPORT_H_ */
 /*
 ************************************************************************************************************************

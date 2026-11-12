@@ -1,3 +1,6 @@
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /**
 ************************************************************************************************************************
@@ -211,6 +214,8 @@ int32_t emv_set_card_type(int32_t cardtype)
 {
 	if(g_emvapi.init.emv_cardtype != NULL)
 		g_emvapi.init.emv_cardtype(cardtype);
+
+    return EMV_OK;
 }
 
 int32_t emv_set_trans_type(uint8_t type)
@@ -223,23 +228,7 @@ int32_t emv_get_trans_type(uint8_t *type)
     return EMV_GetTransType(type);
 }
 
-int32_t emv_set_current_code(uint32_t current)
-{
-    return EMV_SetCurrentCode(current);
-}
-int32_t emv_get_current_code(uint32_t *current)
-{
-    return EMV_GetCurrentCode(current);
-}
-int32_t emv_set_current_exponpent(uint8_t current)
-{
-    return EMV_SetCurrentCodeE(current);
-}
-
-int32_t emv_get_current_exponpent(uint8_t *current)
-{
-    return EMV_GetCurrentCodeE(current);
-}
+/* Currency code / exponent APIs removed: use tags 5F2A (Transaction Currency Code) and 5F36 (Transaction Currency Exponent) instead. */
 
 int32_t emv_set_trans_amount(uint32_t amount)
 {

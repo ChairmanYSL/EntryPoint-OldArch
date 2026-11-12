@@ -171,7 +171,7 @@ int outcome_other_card(unsigned char data_record, unsigned char receipt)
 	}
 	else
 	{
-		JNISendUIReq(g_uireq, UI_TYPE_ON_OUTCOME);
+		/* platform UI request goes through g_send_outcome_cb only */
 	}
 
 	//S52.19
@@ -183,7 +183,7 @@ int outcome_other_card(unsigned char data_record, unsigned char receipt)
 	else
 	{
 
-		JNISendOutcome(g_outcome);
+		/* platform outcome goes through g_send_outcome_cb only */
 	}
 #endif
 
@@ -203,7 +203,7 @@ int outcome_select_next()
 	}
 	else
 	{
-		JNISendOutcome(g_outcome);
+		/* platform outcome goes through g_send_outcome_cb only */
 	}
 
 #endif
@@ -241,7 +241,7 @@ int outcome_try_again_without_restart()
 	}
 	else
 	{
-		JNISendOutcome(g_outcome);
+		/* platform outcome goes through g_send_outcome_cb only */
 	}
 #endif
 	return EMV_REQ_RETAP_AGAIN;
@@ -284,7 +284,7 @@ int outcome_try_again_end_application()
 	}
 	else
 	{
-		JNISendUIReq(g_uireq, UI_TYPE_ON_RESTART);
+		/* platform UI request goes through g_send_outcome_cb only */
 	}
 
 	EMV_SetOutCome(OUTCOME_STATUS_END_APPLICATION, OUTCOME_START_B, OUTCOME_ONLINE_RESP_DATA_NA, OUTCOME_CVM_NA, 0, 1, 0, 1, 0, OUTCOME_AIP_NA, OUTCOME_FIELDOFF_NA, 0x00);
@@ -295,7 +295,7 @@ int outcome_try_again_end_application()
 	}
 	else
 	{
-		JNISendOutcome(g_outcome);
+		/* platform outcome goes through g_send_outcome_cb only */
 	}
 #endif
 	return EMV_REQ_RETAP_AGAIN;
@@ -327,7 +327,7 @@ int outcome_try_again()
 	}
 	else
 	{
-		JNISendOutcome(g_outcome);
+		/* platform outcome goes through g_send_outcome_cb only */
 	}
 #endif
 	return EMV_REQ_RETAP_AGAIN;
@@ -351,7 +351,7 @@ int outcome_end_application()
 	}
 	else
 	{
-		JNISendOutcome(g_outcome);
+		/* platform outcome goes through g_send_outcome_cb only */
 	}
 
 #endif
@@ -400,7 +400,7 @@ int outcome_seephone()
 	}
 	else
 	{
-		JNISendUIReq(g_uireq, UI_TYPE_ON_MSG);
+		/* platform UI request goes through g_send_outcome_cb only */
 	}
 
 
@@ -412,7 +412,7 @@ int outcome_seephone()
 	}
 	else
 	{
-		JNISendOutcome(g_outcome);
+		/* platform outcome goes through g_send_outcome_cb only */
 	}
 
 #endif
@@ -442,7 +442,7 @@ int outcome_end_application_startB()
 	}
 	else
 	{
-		JNISendOutcome(g_outcome);
+		/* platform outcome goes through g_send_outcome_cb only */
 	}
 
 #endif
@@ -477,7 +477,7 @@ void msg_read_card_ok()
 	}
 	else
 	{
-		JNISendUIReq(g_uireq, UI_TYPE_ON_MSG);
+		/* platform UI request goes through g_send_outcome_cb only */
 	}
 #endif
 }
@@ -515,7 +515,7 @@ int outcome_request_another_payment()
 //	}
 //	else
 //	{
-//		JNISendUIReq(g_uireq, UI_TYPE_ON_OUTCOME);
+//		/* platform UI request goes through g_send_outcome_cb only */
 //	}
 //
 //	EMV_SetOutCome(OUTCOME_STATUS_APPROVED, OUTCOME_START_NA, OUTCOME_ONLINE_RESP_DATA_ANY, cvm, 1, 1, 1, 1, 0, OUTCOME_AIP_NA, 0x13, 0x00);
@@ -561,7 +561,7 @@ int outcome_request_another_payment()
 //	}
 //	else
 //	{
-//		JNISendUIReq(g_uireq, UI_TYPE_ON_OUTCOME);
+//		/* platform UI request goes through g_send_outcome_cb only */
 //	}
 //
 //	EMV_SetOutCome(OUTCOME_STATUS_ONLINE_REQUEST, OUTCOME_START_NA, OUTCOME_ONLINE_RESP_DATA_NA, cvm, 1, 0, 1, 1, g_emv_cnxt->receipt, OUTCOME_AIP_NA, 0x13, 0x00);
